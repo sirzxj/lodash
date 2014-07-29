@@ -1,13 +1,15 @@
-# Lo-Dash v2.5.0-pre
+# Lo-Dash v3.0.0-pre
+
 A utility library delivering consistency, [customization](http://lodash.com/custom-builds), [performance](http://lodash.com/benchmarks), & [extras](http://lodash.com/#features).
 
 ## Documentation
+
 * [API Documentation](http://lodash.com/docs)
 * [DevDocs – *a searchable interface for our documentation*](http://devdocs.io/lodash/)
 
 ## Download
 
-Review the [build differences](https://github.com/lodash/lodash/wiki/build-differences) & pick the build that’s right for you.
+Review the [build differences](https://github.com/lodash/lodash/wiki/build-differences) & pick the one that’s right for you.
 
 * [Modern build](https://raw.github.com/lodash/lodash/2.4.1/dist/lodash.js) ([minified](https://raw.github.com/lodash/lodash/2.4.1/dist/lodash.min.js))<br>
   For new environments like Chrome, Firefox, IE ≥ 9, & Safari ≥ 5.1
@@ -26,7 +28,7 @@ Check out our [unit tests](http://lodash.com/tests), [benchmarks](http://lodash.
 
 ## Installation
 
-In browsers:
+In a browser:
 
 ```html
 <script src="lodash.js"></script>
@@ -56,7 +58,7 @@ var _ = require('lodash-underscore');
 ```
 
 **Note:**
-Don’t assign values to [special variable](http://nodejs.org/api/repl.html#repl_repl_features) `_` when in the REPL
+Don’t assign values to the [special variable](http://nodejs.org/api/repl.html#repl_repl_features) `_` when in the REPL
 
 ## Features *not* in Underscore
 
@@ -66,11 +68,12 @@ Don’t assign values to [special variable](http://nodejs.org/api/repl.html#repl
  * [_(…)](http://lodash.com/docs#_) supports intuitive chaining
  * [_.at](http://lodash.com/docs#at) for cherry-picking collection values
  * [_.bindKey](http://lodash.com/docs#bindKey) for binding [*“lazy”*](http://michaux.ca/articles/lazy-function-definition-pattern) defined methods
+ * [_.callback](http://lodash.com/docs#createCallback) for extending callbacks in methods & mixins
+ * [_.chunk](http://lodash.com/docs#chunk) for splitting an array into chunks of a given size
  * [_.clone](http://lodash.com/docs#clone) supports shallow cloning of `Date` & `RegExp` objects
  * [_.cloneDeep](http://lodash.com/docs#cloneDeep) for deep cloning arrays & objects
  * [_.contains](http://lodash.com/docs#contains) accepts a `fromIndex`
  * [_.create](http://lodash.com/docs#create) for easier object inheritance
- * [_.callback](http://lodash.com/docs#createCallback) for extending callbacks in methods & mixins
  * [_.curry](http://lodash.com/docs#curry) for creating [curried](http://hughfdjackson.com/javascript/why-curry-helps/) functions
  * [_.debounce](http://lodash.com/docs#debounce) & [_.throttle](http://lodash.com/docs#throttle) accept additional `options` for more control
  * [_.findIndex](http://lodash.com/docs#findIndex) & [_.findKey](http://lodash.com/docs#findKey) for finding indexes & keys
@@ -88,7 +91,7 @@ Don’t assign values to [special variable](http://nodejs.org/api/repl.html#repl
  * [_.parseInt](http://lodash.com/docs#parseInt) for consistent behavior
  * [_.pull](http://lodash.com/docs#pull), [_.pullAt](http://lodash.com/docs#pullAt), & [_.remove](http://lodash.com/docs#remove) for mutating arrays
  * [_.random](http://lodash.com/docs#random) supports returning floating-point numbers
- * [_.runInContext](http://lodash.com/docs#runInContext) for easier mocking
+ * [_.runInContext](http://lodash.com/docs#runInContext) for collisionless mixins & easier mocking
  * [_.slice](http://lodash.com/docs#slice) for creating subsets of array-like values
  * [_.sortBy](http://lodash.com/docs#sortBy) supports sorting by multiple properties
  * [_.support](http://lodash.com/docs#support) for flagging environment features
@@ -114,7 +117,7 @@ Don’t assign values to [special variable](http://nodejs.org/api/repl.html#repl
 
 ## Support
 
-Tested in Chrome (19, 34-35), Firefox (3, 20, 28-29), IE 6-11, Opera 21-22, Safari 5-7, Node.js 0.6.21~0.10.28, PhantomJS 1.9.2, RingoJS 0.9, & Rhino 1.7RC5.
+Tested in Chrome (19, 35-36), Firefox (3, 20, 29-30), IE 6-11, Opera 21-22, Safari 5-7, Node.js 0.8.26~0.10.29, PhantomJS 1.9.2, RingoJS 0.9, & Rhino 1.7RC5.
 
 Automated browser test runs [are available](https://saucelabs.com/u/lodash) as well as CI runs for [lodash](https://travis-ci.org/lodash/lodash/), [lodash-cli](https://travis-ci.org/lodash/lodash-cli/), [lodash-amd](https://travis-ci.org/lodash/lodash-amd/), [lodash-node](https://travis-ci.org/lodash/lodash-node/), & [grunt-lodash](https://travis-ci.org/lodash/grunt-lodash). Special thanks to [Sauce Labs](https://saucelabs.com/) for providing automated browser testing.
 

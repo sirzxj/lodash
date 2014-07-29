@@ -4,16 +4,23 @@
   var undefined;
 
   /** Used as the size to cover large array optimizations */
-  var largeArraySize = 200;
+  var LARGE_ARRAY_SIZE = 200;
 
   /** Used as the maximum length an array-like object */
-  var maxSafeInteger = Math.pow(2, 53) - 1;
+  var MAX_SAFE_INTEGER = Math.pow(2, 53) - 1;
 
   /** Used as a reference to the global object */
   var root = (typeof global == 'object' && global) || this;
 
   /** Used to store Lo-Dash to test for bad extensions/shims */
   var lodashBizarro = root.lodashBizarro;
+
+  /** Used for native method references */
+  var arrayProto = Array.prototype,
+      errorProto = Error.prototype,
+      funcProto = Function.prototype,
+      objectProto = Object.prototype,
+      stringProto = String.prototype;
 
   /** Method and object shortcuts */
   var phantom = root.phantom,
@@ -27,10 +34,11 @@
       JSON = root.JSON,
       noop = function() {},
       params = root.arguments,
-      push = Array.prototype.push,
-      slice = Array.prototype.slice,
+      push = arrayProto.push,
+      slice = arrayProto.slice,
       system = root.system,
-      toString = Object.prototype.toString;
+      toString = objectProto.toString,
+      Uint8Array = root.Uint8Array;
 
   /** The file path of the Lo-Dash file to test */
   var filePath = (function() {
@@ -67,7 +75,8 @@
   var ui = root.ui || (root.ui = {
     'buildPath': filePath,
     'loaderPath': '',
-    'isModularize': /\b(?:commonjs|(index|main)\.js|lodash-(?:amd|node)|modularize|npm)\b/.test(filePath),
+    'isModularize': /\b(?:commonjs|(index|main)\.js|lodash-(?:amd|es6|node)|modularize|npm|transpiled)\b/.test(filePath),
+    'isStrict': /\b(?:lodash-es6|transpiled)\b/.test(filePath),
     'urlParams': {}
   });
 
@@ -83,14 +92,17 @@
   /** Detect if testing `npm` modules */
   var isNpm = isModularize && /\bnpm\b/.test([ui.buildPath, ui.urlParams.build]);
 
-  /** Detects if running in PhantomJS */
+  /** Detect if running in PhantomJS */
   var isPhantom = phantom || typeof callPhantom == 'function';
 
   /** Detect if running in Rhino */
   var isRhino = isJava && typeof global == 'function' && global().Array === root.Array;
 
+  /** Detect if Lo-Dash is in strict mode */
+  var isStrict = ui.isStrict;
+
   /** Used to test Web Workers */
-  var Worker = !(ui.isForeign || isModularize) && document && root.Worker;
+  var Worker = !(ui.isForeign || ui.isSauceLabs || isModularize) && document && root.Worker;
 
   /** Used to test host objects in IE */
   try {
@@ -170,18 +182,29 @@
   /** The `lodash` function to test */
   var _ = root._ || (root._ = (
     _ = load(filePath) || root._,
-    _ = _._ || _,
+    _ = _._ || (isStrict = ui.isStrict = isStrict || 'default' in _, _['default'])  || _,
     (_.runInContext ? _.runInContext(root) : _)
   ));
 
-  /** Used to pass falsey values to methods */
+  /** Used as the property name for wrapper metadata */
+  var EXPANDO = '__lodash_' + _.VERSION.replace(/[-.]/g, '_') + '__';
+
+  /** Used to provide falsey values to methods */
   var falsey = [, '', 0, false, NaN, null, undefined];
 
-  /** Used to pass empty values to methods */
+  /** Used to provide empty values to methods */
   var empties = [[], {}].concat(falsey.slice(1));
 
-  /** Used as the property name for wrapper metadata */
-  var expando = '__lodash@'  + _.VERSION + '__';
+  /** Used to test error objects */
+  var errors = [
+    new Error,
+    new EvalError,
+    new RangeError,
+    new ReferenceError,
+    new SyntaxError,
+    new TypeError,
+    new URIError
+  ];
 
   /** Used to set property descriptors */
   var defineProperty = (function() {
@@ -210,6 +233,7 @@
   /** Used to check whether methods support typed arrays */
   var typedArrays = [
     'Float32Array',
+    'Float64Array',
     'Int8Array',
     'Int16Array',
     'Int32Array',
@@ -285,22 +309,31 @@
         '({',
         "'_arguments': (function() { return arguments; }(1, 2, 3)),",
         "'_array': [1, 2, 3],",
-        "'_boolean': new Boolean(false),",
+        "'_boolean': Object(false),",
         "'_date': new Date,",
         "'_errors': [new Error, new EvalError, new RangeError, new ReferenceError, new SyntaxError, new TypeError, new URIError],",
         "'_function': function() {},",
         "'_nan': NaN,",
         "'_null': null,",
-        "'_number': new Number(0),",
+        "'_number': Object(0),",
         "'_object': { 'a': 1, 'b': 2, 'c': 3 },",
         "'_regexp': /x/,",
-        "'_string': new String('a'),",
+        "'_string': Object('a'),",
         "'_undefined': undefined",
         '})'
       ].join('\n')));
     }
     catch(e) {
-      return;
+      if (!phantom) {
+        return;
+      }
+    }
+    var fnToString = funcProto.toString,
+        nativeString = fnToString.call(toString),
+        reToString = /toString/g;
+
+    function createToString(funcName) {
+      return _.constant(nativeString.replace(reToString, funcName));
     }
     // load ES6 Set shim
     require('./asset/set');
@@ -308,67 +341,119 @@
     // expose `baseEach` for better code coverage
     if (isModularize && !isNpm) {
       var path = require('path'),
-          baseEach = require(path.join(path.dirname(filePath), 'internals', 'baseEach.js'));
+          baseEach = require(path.join(path.dirname(filePath), 'internal', 'baseEach.js'));
 
-      _._baseEach = baseEach.baseEach || baseEach;
+      _._baseEach = baseEach.baseEach || baseEach['default'] || baseEach;
     }
     // allow bypassing native checks
-    var _fnToString = Function.prototype.toString;
-    setProperty(Function.prototype, 'toString', function wrapper() {
-      setProperty(Function.prototype, 'toString', _fnToString);
-      var result = this === Set ? this.toString() : _fnToString.call(this);
-      setProperty(Function.prototype, 'toString', wrapper);
+    setProperty(funcProto, 'toString', function wrapper() {
+      setProperty(funcProto, 'toString', fnToString);
+      var result = _.has(this, 'toString') ? this.toString() : fnToString.call(this);
+      setProperty(funcProto, 'toString', wrapper);
       return result;
     });
 
-    // fake DOM
-    setProperty(global, 'window', {});
-    setProperty(global.window, 'document', {});
-    setProperty(global.window.document, 'createDocumentFragment', function() {
-      return { 'nodeType': 11 };
-    });
-
-    // fake `WinRTError`
-    setProperty(global, 'WinRTError', Error);
-
     // add extensions
-    Function.prototype._method = function() {};
+    funcProto._method = _.noop;
 
     // set bad shims
     var _isArray = Array.isArray;
-    setProperty(Array, 'isArray', function() {});
+    setProperty(Array, 'isArray', _.noop);
 
     var _now = Date.now;
-    setProperty(Date, 'now', function() {});
+    setProperty(Date, 'now', _.noop);
 
     var _create = create;
-    setProperty(Object, 'create', function() {});
+    setProperty(Object, 'create', _.noop);
 
     var _defineProperty = Object.defineProperty;
-    setProperty(Object, 'defineProperty', function() {});
+    setProperty(Object, 'defineProperty', _.noop);
 
     var _getPrototypeOf = Object.getPrototypeOf;
-    setProperty(Object, 'getPrototypeOf', function() {});
+    setProperty(Object, 'getPrototypeOf', _.noop);
 
     var _keys = Object.keys;
-    setProperty(Object, 'keys', function() {});
+    setProperty(Object, 'keys', _.noop);
 
-    var _hasOwnProperty = Object.prototype.hasOwnProperty;
-    setProperty(Object.prototype, 'hasOwnProperty', function(key) {
+    var _hasOwnProperty = objectProto.hasOwnProperty;
+    setProperty(objectProto, 'hasOwnProperty', function(key) {
       if (key == '1' && _.isArguments(this) && _.isEqual(_.values(this), [0, 0])) {
         throw new Error;
       }
-      return _hasOwnProperty.call(this, key);
+      return _.has(this, key);
     });
 
-    var _contains = String.prototype.contains;
-    setProperty(String.prototype, 'contains',  _contains ? function() {} : Boolean);
+    var _isFinite = Number.isFinite;
+    setProperty(Number, 'isFinite', _.noop);
+
+    var _contains = stringProto.contains;
+    setProperty(stringProto, 'contains', _contains ? _.noop : Boolean);
+
+    var _ArrayBuffer = ArrayBuffer;
+    setProperty(root, 'ArrayBuffer', (function() {
+      function ArrayBuffer(byteLength) {
+        var buffer = new _ArrayBuffer(byteLength);
+        if (!byteLength) {
+          setProperty(buffer, 'slice', buffer.slice ? null : bufferSlice);
+        }
+        return buffer;
+      }
+      function bufferSlice() {
+        var newBuffer = new _ArrayBuffer(this.byteLength),
+            view = new Uint8Array(newBuffer);
+
+        view.set(new Uint8Array(this));
+        return newBuffer;
+      }
+      setProperty(ArrayBuffer, 'toString', createToString('ArrayBuffer'));
+      setProperty(bufferSlice, 'toString', createToString('slice'));
+      return ArrayBuffer;
+    }()));
+
+    if (!root.Float64Array) {
+      setProperty(root, 'Float64Array', (function() {
+        function Float64Array(buffer, byteOffset, length) {
+          return arguments.length == 1
+            ? new Uint8Array(buffer)
+            : new Uint8Array(buffer, byteOffset || 0, length || buffer.byteLength);
+        }
+        setProperty(Float64Array, 'BYTES_PER_ELEMENT', 8);
+        setProperty(Float64Array, 'toString', createToString('Float64Array'));
+        return Float64Array;
+      }()));
+    }
+    var _parseInt = parseInt;
+    setProperty(root, 'parseInt', (function() {
+      var checkStr = whitespace + '08',
+          isFaked = _parseInt(checkStr) != 8,
+          reHexPrefix = /^0[xX]/,
+          reTrim = RegExp('^[' + whitespace + ']+|[' + whitespace + ']+$');
+
+      return function(value, radix) {
+        if (value == checkStr && !isFaked) {
+          isFaked = true;
+          return 0;
+        }
+        value = String(value == null ? '' : value).replace(reTrim, '');
+        return _parseInt(value, +radix || (reHexPrefix.test(value) ? 16 : 10));
+      };
+    }()));
+
+    // fake `WinRTError`
+    setProperty(root, 'WinRTError', Error);
+
+    // fake DOM
+    setProperty(root, 'window', {});
+    setProperty(root.window, 'document', {});
+    setProperty(root.window.document, 'createDocumentFragment', function() {
+      return { 'nodeType': 11 };
+    });
 
     // clear cache so Lo-Dash can be reloaded
     emptyObject(require.cache);
 
     // load Lo-Dash and expose it to the bad extensions/shims
-    lodashBizarro = (lodashBizarro = require(filePath))._ || lodashBizarro;
+    lodashBizarro = (lodashBizarro = require(filePath))._ || lodashBizarro['default'] || lodashBizarro;
 
     // restore native methods
     setProperty(Array,  'isArray', _isArray);
@@ -377,17 +462,28 @@
     setProperty(Object, 'defineProperty', _defineProperty);
     setProperty(Object, 'getPrototypeOf', _getPrototypeOf);
     setProperty(Object, 'keys', _keys);
-    setProperty(Object.prototype,   'hasOwnProperty', _hasOwnProperty);
-    setProperty(Function.prototype, 'toString', _fnToString);
 
-    if (_contains) {
-      setProperty(String.prototype, 'contains', _contains);
+    setProperty(objectProto, 'hasOwnProperty', _hasOwnProperty);
+    setProperty(root, 'parseInt', _parseInt);
+
+    if (_isFinite) {
+      setProperty(Number, 'isFinite', _isFinite);
     } else {
-      delete String.prototype.contains;
+      delete Number.isFinite;
     }
-    delete global.window;
-    delete global.WinRTError;
-    delete Function.prototype._method;
+    if (_contains) {
+      setProperty(stringProto, 'contains', _contains);
+    } else {
+      delete stringProto.contains;
+    }
+    if (_ArrayBuffer) {
+      setProperty(root, 'ArrayBuffer', _ArrayBuffer);
+    } else {
+      delete root.ArrayBuffer;
+    }
+    delete root.WinRTError;
+    delete root.window;
+    delete funcProto._method;
   }());
 
   // add values from an iframe
@@ -404,17 +500,17 @@
       '<script>',
       'parent._._arguments = (function() { return arguments; }(1, 2, 3));',
       'parent._._array = [1, 2, 3];',
-      'parent._._boolean = new Boolean(false);',
+      'parent._._boolean = Object(false);',
       'parent._._date = new Date;',
       "parent._._element = document.createElement('div');",
       'parent._._errors = [new Error, new EvalError, new RangeError, new ReferenceError, new SyntaxError, new TypeError, new URIError];',
       'parent._._function = function() {};',
       'parent._._nan = NaN;',
       'parent._._null = null;',
-      'parent._._number = new Number(0);',
+      'parent._._number = Object(0);',
       "parent._._object = { 'a': 1, 'b': 2, 'c': 3 };",
       'parent._._regexp = /x/;',
-      "parent._._string = new String('a');",
+      "parent._._string = Object('a');",
       'parent._._undefined = undefined;',
       '<\/script>'
     ].join('\n'));
@@ -469,7 +565,7 @@
 
     asyncTest('supports loading ' + basename + ' in a web worker', 1, function() {
       if (Worker) {
-        var limit = 15000,
+        var limit = 30000 / QUnit.config.asyncRetries,
             start = +new Date;
 
         var attempt = function() {
@@ -499,16 +595,16 @@
       }
     });
 
-    test('should avoid overwritten native methods', 9, function() {
+    test('should avoid overwritten native methods', 15, function() {
       function Foo() {}
 
-      function message(methodName) {
-        return '`_.' + methodName + '` should avoid overwritten native methods';
+      function message(lodashMethod, nativeMethod) {
+        return '`' + lodashMethod + '` should avoid overwritten native `' + nativeMethod + '`';
       }
 
       var object = { 'a': 1 },
           otherObject = { 'b': 2 },
-          largeArray = _.times(largeArraySize, _.constant(object));
+          largeArray = _.times(LARGE_ARRAY_SIZE, _.constant(object));
 
       if (lodashBizarro) {
         try {
@@ -516,43 +612,50 @@
         } catch(e) {
           actual = null;
         }
-        deepEqual(actual, [true, false], message('Array.isArray'));
+        deepEqual(actual, [true, false], message('_.isArray', 'Array.isArray'));
 
         try {
           actual = lodashBizarro.now();
         } catch(e) {
           actual = null;
         }
-        ok(typeof actual == 'number', message('Date.now'));
+        ok(typeof actual == 'number', message('_.now', 'Date.now'));
 
         try {
           actual = [lodashBizarro.create(Foo.prototype, object), lodashBizarro.create()];
         } catch(e) {
           actual = null;
         }
-        ok(actual[0] instanceof Foo, message('Object.create'));
-        deepEqual(actual[1], {}, message('Object.create'));
+        ok(actual[0] instanceof Foo, message('_.create', 'Object.create'));
+        deepEqual(actual[1], {}, message('_.create', 'Object.create'));
 
         try {
           actual = lodashBizarro.bind(function() { return this.a; }, object);
         } catch(e) {
           actual = null;
         }
-        ok(!(expando in actual), message('Object.defineProperty'));
+        ok(!(EXPANDO in actual), message('_.bind', 'Object.defineProperty'));
 
         try {
           actual = [lodashBizarro.isPlainObject({}), lodashBizarro.isPlainObject([])];
         } catch(e) {
           actual = null;
         }
-        deepEqual(actual, [true, false], message('Object.getPrototypeOf'));
+        deepEqual(actual, [true, false], message('_.isPlainObject', 'Object.getPrototypeOf'));
 
         try {
           actual = [lodashBizarro.keys(object), lodashBizarro.keys()];
         } catch(e) {
           actual = null;
         }
-        deepEqual(actual, [['a'], []], message('Object.keys'));
+        deepEqual(actual, [['a'], []], message('_.keys', 'Object.keys'));
+
+        try {
+          actual = [lodashBizarro.isFinite(1), lodashBizarro.isFinite(NaN)];
+        } catch(e) {
+          actual = null;
+        }
+        deepEqual(actual, [true, false], message('_.isFinite', 'Number.isFinite'));
 
         try {
           actual = [
@@ -563,17 +666,45 @@
         } catch(e) {
           actual = null;
         }
-        deepEqual(actual, [[otherObject], [object], [object]], message('Set'));
+        deepEqual(actual, [[otherObject], [object], [object]], message('_.difference`, `_.intersection`, and `_.uniq', 'Set'));
 
         try {
           actual = lodashBizarro.contains('abc', 'c');
         } catch(e) {
           actual = null;
         }
-        strictEqual(actual, true, message('String#contains'));
+        strictEqual(actual, true, message('_.contains', 'String#contains'));
+
+        if (ArrayBuffer) {
+          try {
+            var buffer = new ArrayBuffer(10);
+            actual = lodashBizarro.clone(buffer);
+          } catch(e) {
+            actual = null;
+          }
+          deepEqual(actual, buffer, message('_.clone', 'ArrayBuffer#slice'));
+          notStrictEqual(actual, buffer, message('_.clone', 'ArrayBuffer#slice'));
+        }
+        else {
+          skipTest(2);
+        }
+        if (ArrayBuffer && Uint8Array) {
+          try {
+            var array = new Uint8Array(new ArrayBuffer(10));
+            actual = lodashBizarro.cloneDeep(array);
+          } catch(e) {
+            actual = null;
+          }
+          deepEqual(actual, array, message('_.cloneDeep', 'Float64Array'));
+          notStrictEqual(actual && actual.buffer, array.buffer, message('_.cloneDeep', 'Float64Array'));
+          notStrictEqual(actual, array, message('_.cloneDeep', 'Float64Array'));
+        }
+        else {
+          skipTest(3);
+        }
       }
       else {
-        skipTest(9);
+        skipTest(15);
       }
     });
   }());
@@ -583,13 +714,41 @@
   QUnit.module('lodash constructor');
 
   (function() {
+    var values = empties.concat(true, 1, 'a'),
+        expected = _.map(values, _.constant(true));
+
     test('creates a new instance when called without the `new` operator', 1, function() {
-      ok(_() instanceof _);
+      var actual = _.map(values, function(value) {
+        return _(value) instanceof _;
+      });
+
+      deepEqual(actual, expected);
     });
 
-    test('should return provided `lodash` instances', 1,function() {
-      var wrapped = _(false);
-      strictEqual(_(wrapped), wrapped);
+    test('should return provided `lodash` instances', 1, function() {
+      var actual = _.map(values, function(value) {
+        var wrapped = _(value);
+        return _(wrapped) === wrapped;
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should convert foreign wrapped values to `lodash` instances', 1, function() {
+      if (lodashBizarro) {
+        var actual = _.map(values, function(value) {
+          var wrapped = _(lodashBizarro(value)),
+              unwrapped = wrapped.__wrapped__;
+
+          return wrapped instanceof _ &&
+            (unwrapped === value || (_.isNaN(unwrapped) && _.isNaN(value)));
+        });
+
+        deepEqual(actual, expected);
+      }
+      else {
+        skipTest();
+      }
     });
   }());
 
@@ -605,15 +764,29 @@
     }
     test('should create a function that executes `func` after `n` calls', 4, function() {
       strictEqual(after(5, 5), 1, 'after(n) should execute `func` after being called `n` times');
-      strictEqual(after(5, 4), 0, 'after(n) should not execute `func` unless called `n` times');
+      strictEqual(after(5, 4), 0, 'after(n) should not execute `func` before being called `n` times');
       strictEqual(after(0, 0), 0, 'after(0) should not execute `func` immediately');
       strictEqual(after(0, 1), 1, 'after(0) should execute `func` when called once');
     });
 
-    test('should coerce non-finite `n` values to `0`', 3, function() {
-      _.each([-Infinity, NaN, Infinity], function(n) {
-        strictEqual(after(n, 1), 1);
+    test('should coerce non-finite `n` values to `0`', 1, function() {
+      var values = [-Infinity, NaN, Infinity],
+          expected = _.map(values, _.constant(1));
+
+      var actual = _.map(values, function(n) {
+        return after(n, 1);
       });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should not set a `this` binding', 2, function() {
+      var after = _.after(1, function() { return ++this.count; }),
+          object = { 'count': 0, 'after': after };
+
+      object.after();
+      strictEqual(object.after(), 2);
+      strictEqual(object.count, 2);
     });
   }());
 
@@ -672,7 +845,7 @@
     var args = arguments;
 
     test('should return `undefined` for nonexistent keys', 1, function() {
-      var actual = _.at(['a', 'b',  'c'], [2, 4, 0]);
+      var actual = _.at(['a', 'b', 'c'], [2, 4, 0]);
       deepEqual(actual, ['c', undefined, 'a']);
     });
 
@@ -705,6 +878,93 @@
       });
     });
   }('a', 'b', 'c'));
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.attempt');
+
+  (function() {
+    test('should return the result of `func`', 1, function() {
+      strictEqual(_.attempt(_.constant('x')), 'x');
+    });
+
+    test('should return the caught error', 1, function() {
+      var expected = _.map(errors, _.constant(true));
+
+      var actual = _.map(errors, function(error) {
+        return _.attempt(function() { throw error; }) === error;
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should coerce errors to error objects', 1, function() {
+      var actual = _.attempt(function() { throw 'x'; });
+      ok(_.isEqual(actual, Error('x')));
+    });
+
+    test('should work with an error object from another realm', 1, function() {
+      if (_._object) {
+        var expected = _.map(_._errors, _.constant(true));
+
+        var actual = _.map(_._errors, function(error) {
+          return _.attempt(function() { throw error; }) === error;
+        });
+
+        deepEqual(actual, expected);
+      }
+      else {
+        skipTest();
+      }
+    });
+
+    test('should return an unwrapped value when chaining', 1, function() {
+      if (!isNpm) {
+        strictEqual(_(_.constant('x')).attempt(), 'x');
+      }
+      else {
+        skipTest();
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.before');
+
+  (function() {
+    function before(n, times) {
+      var count = 0;
+      _.times(times, _.before(n, function() { count++; }));
+      return count;
+    }
+    test('should create a function that executes `func` after `n` calls', 4, function() {
+      strictEqual(before(5, 4), 4, 'before(n) should execute `func` before being called `n` times');
+      strictEqual(before(5, 6), 4, 'before(n) should not execute `func` after being called `n - 1` times');
+      strictEqual(before(0, 0), 0, 'before(0) should not execute `func` immediately');
+      strictEqual(before(0, 1), 0, 'before(0) should not execute `func` when called');
+    });
+
+    test('should coerce non-finite `n` values to `0`', 1, function() {
+      var values = [-Infinity, NaN, Infinity],
+          expected = _.map(values, _.constant(0));
+
+      var actual = _.map(values, function(n) {
+        return before(n);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should not set a `this` binding', 2, function() {
+      var before = _.before(2, function() { return ++this.count; }),
+          object = { 'count': 0, 'before': before };
+
+      object.before();
+      strictEqual(object.before(), 1);
+      strictEqual(object.count, 1);
+    });
+  }());
 
   /*--------------------------------------------------------------------------*/
 
@@ -771,18 +1031,14 @@
     });
 
     test('should support placeholders', 4, function() {
-      if (!isModularize) {
-        var object = {},
-            bound = _.bind(fn, object, _, 'b', _);
+      var object = {},
+          ph = _.bind.placeholder,
+          bound = _.bind(fn, object, ph, 'b', ph);
 
-        deepEqual(bound('a', 'c'), [object, 'a', 'b', 'c']);
-        deepEqual(bound('a'), [object, 'a', 'b', undefined]);
-        deepEqual(bound('a', 'c', 'd'), [object, 'a', 'b', 'c', 'd']);
-        deepEqual(bound(), [object, undefined, 'b', undefined]);
-      }
-      else {
-        skipTest(4);
-      }
+      deepEqual(bound('a', 'c'), [object, 'a', 'b', 'c']);
+      deepEqual(bound('a'), [object, 'a', 'b', undefined]);
+      deepEqual(bound('a', 'c', 'd'), [object, 'a', 'b', 'c', 'd']);
+      deepEqual(bound(), [object, undefined, 'b', undefined]);
     });
 
     test('should create a function with a `length` of `0`', 2, function() {
@@ -875,7 +1131,7 @@
       var object = new Foo;
       _.bindAll(object);
 
-      var actual = _.map(_.functions(object), function(methodName) {
+      var actual = _.map(_.functions(object).sort(), function(methodName) {
         return object[methodName].call({});
       });
 
@@ -894,7 +1150,7 @@
 
       _.bindAll(object, 'a', 'b');
 
-      var actual = _.map(_.functions(object), function(methodName) {
+      var actual = _.map(_.functions(object).sort(), function(methodName) {
         return object[methodName].call({});
       });
 
@@ -915,7 +1171,7 @@
 
       _.bindAll(object, ['a', 'b'], ['c']);
 
-      var actual = _.map(_.functions(object), function(methodName) {
+      var actual = _.map(_.functions(object).sort(), function(methodName) {
         return object[methodName].call({});
       });
 
@@ -925,7 +1181,7 @@
     test('should work with an array `object` argument', 1, function() {
       var array = ['push', 'pop'];
       _.bindAll(array);
-      strictEqual(array.pop, Array.prototype.pop);
+      strictEqual(array.pop, arrayProto.pop);
     });
 
     test('should work with `arguments` objects as secondary arguments', 1, function() {
@@ -936,7 +1192,7 @@
 
       _.bindAll(object, args);
 
-      var actual = _.map(_.functions(object), function(methodName) {
+      var actual = _.map(_.functions(object).sort(), function(methodName) {
         return object[methodName].call({});
       });
 
@@ -963,26 +1219,24 @@
       object.greet = function(greeting) {
         return this.name + ' says: ' + greeting + '!';
       };
+
       strictEqual(bound(), 'fred says: hi!');
     });
 
     test('should support placeholders', 4, function() {
       var object = {
-        'fn': function fn(a, b, c, d) {
+        'fn': function() {
           return slice.call(arguments);
         }
       };
 
-      if (!isModularize) {
-        var bound = _.bindKey(object, 'fn', _, 'b', _);
-        deepEqual(bound('a', 'c'), ['a', 'b', 'c']);
-        deepEqual(bound('a'), ['a', 'b', undefined]);
-        deepEqual(bound('a', 'c', 'd'), ['a', 'b', 'c', 'd']);
-        deepEqual(bound(), [undefined, 'b', undefined]);
-      }
-      else {
-        skipTest(4);
-      }
+      var ph = _.bindKey.placeholder,
+          bound = _.bindKey(object, 'fn', ph, 'b', ph);
+
+      deepEqual(bound('a', 'c'), ['a', 'b', 'c']);
+      deepEqual(bound('a'), ['a', 'b', undefined]);
+      deepEqual(bound('a', 'c', 'd'), ['a', 'b', 'c', 'd']);
+      deepEqual(bound(), [undefined, 'b', undefined]);
     });
   }());
 
@@ -1055,8 +1309,7 @@
 
     test('`_.' + methodName + '` should return an unwrapped value when chaining', 1, function() {
       if (!isNpm) {
-        var actual = _('hello world')[methodName]();
-        strictEqual(actual, expected);
+        strictEqual(_('hello world')[methodName](), expected);
       }
       else {
         skipTest();
@@ -1095,8 +1348,7 @@
 
     test('should return an unwrapped value when chaining', 1, function() {
       if (!isNpm) {
-        var actual = _('fred').capitalize();
-        strictEqual(actual, 'Fred');
+        strictEqual(_('fred').capitalize(), 'Fred');
       }
       else {
         skipTest();
@@ -1119,13 +1371,14 @@
       }
     });
 
-    test('should return the existing wrapper when chaining', 1, function() {
+    test('should return existing wrapped values', 2, function() {
       if (!isNpm) {
-        var wrapper = _({ 'a': 0 });
-        strictEqual(wrapper.chain(), wrapper);
+        var wrapped = _({ 'a': 0 });
+        strictEqual(_.chain(wrapped), wrapped);
+        strictEqual(wrapped.chain(), wrapped);
       }
       else {
-        skipTest();
+        skipTest(2);
       }
     });
 
@@ -1152,9 +1405,9 @@
         _.times(2, function(index) {
           var array = ['one two three four', 'five six seven eight', 'nine ten eleven twelve'],
               expected = { ' ': 9, 'e': 14, 'f': 2, 'g': 1, 'h': 2, 'i': 4, 'l': 2, 'n': 6, 'o': 3, 'r': 2, 's': 2, 't': 5, 'u': 1, 'v': 4, 'w': 2, 'x': 1 },
-              wrapper = index ? _(array).chain() : _.chain(array);
+              wrapped = index ? _(array).chain() : _.chain(array);
 
-          var actual = wrapper
+          var actual = wrapped
             .chain()
             .map(function(value) { return value.split(''); })
             .flatten()
@@ -1168,8 +1421,8 @@
           deepEqual(actual, expected);
 
           array = [1, 2, 3, 4, 5, 6];
-          wrapper = index ? _(array).chain() : _.chain(array);
-          actual = wrapper
+          wrapped = index ? _(array).chain() : _.chain(array);
+          actual = wrapped
             .chain()
             .filter(function(n) { return n % 2; })
             .reject(function(n) { return n % 3 == 0; })
@@ -1179,8 +1432,8 @@
           deepEqual(actual, [5, 1]);
 
           array = [3, 4];
-          wrapper = index ? _(array).chain() : _.chain(array);
-          actual = wrapper
+          wrapped = index ? _(array).chain() : _.chain(array);
+          actual = wrapped
             .reverse()
             .concat([2, 1])
             .unshift(5)
@@ -1199,51 +1452,81 @@
 
   /*--------------------------------------------------------------------------*/
 
-  QUnit.module('cloning');
+  QUnit.module('lodash.chunk');
+
+  (function() {
+    var array = [0, 1, 2, 3, 4, 5];
+
+    test('should return chunked arrays', 1, function() {
+      var actual = _.chunk(array, 3);
+      deepEqual(actual, [[0, 1, 2], [3, 4, 5]]);
+    });
+
+    test('should return the last chunk as remaining elements', 1, function() {
+      var actual = _.chunk(array, 4);
+      deepEqual(actual, [[0, 1, 2, 3], [4, 5]]);
+    });
+
+    test('should ensure the minimum `chunkSize` is `1`', 1, function() {
+      var values = falsey.concat(-1, -Infinity),
+          expected = _.map(values, _.constant([[0], [1], [2], [3], [4], [5]]));
+
+      var actual = _.map(values, function(value, index) {
+        return index ? _.chunk(array, value) : _.chunk(array);
+      });
+
+      deepEqual(actual, expected);
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('clone methods');
 
   (function() {
     function Klass() { this.a = 1; }
     Klass.prototype = { 'b': 1 };
 
     var nonCloneable = {
-      'a DOM element': body,
-      'a function': Klass
+      'DOM elements': body,
+      'functions': Klass
     };
 
     var objects = {
-      'an `arguments` object': arguments,
-      'an array': ['a', 'b', 'c', ''],
-      'an array-like-object': { '0': 'a', '1': 'b', '2': 'c',  '3': '', 'length': 5 },
-      'boolean': false,
-      'boolean object': Object(false),
-      'an Error object': new Error('text'),
-      'an EvalError object': new EvalError('text'),
-      'a RangeError object': new RangeError('text'),
-      'a ReferenceError object': new ReferenceError('text'),
-      'a SyntaxError object': new SyntaxError('text'),
-      'a TypeError object': new TypeError('text'),
-      'a URIError object': new URIError('text'),
-      'a Klass instance': new Klass,
-      'an object': { 'a': 0, 'b': 1, 'c': 3 },
-      'an object with object values': { 'a': /a/, 'b': ['B'], 'c': { 'C': 1 } },
-      'an object from another document': _._object || {},
-      'null': null,
-      'a number': 3,
-      'a number object': Object(3),
-      'a regexp': /a/gim,
-      'a string': 'a',
-      'a string object': Object('a'),
-      'undefined': undefined
+      '`arguments` objects': arguments,
+      'arrays': ['a', ''],
+      'array-like-objects': { '0': 'a', '1': '', 'length': 3 },
+      'booleans': false,
+      'boolean objects': Object(false),
+      'Klass instances': new Klass,
+      'objects': { 'a': 0, 'b': 1, 'c': 3 },
+      'objects with object values': { 'a': /a/, 'b': ['B'], 'c': { 'C': 1 } },
+      'objects from another document': _._object || {},
+      'null values': null,
+      'numbers': 3,
+      'number objects': Object(3),
+      'regexes': /a/gim,
+      'strings': 'a',
+      'string objects': Object('a'),
+      'undefined values': undefined
     };
 
-    objects['an array'].length = 5;
+    objects['arrays'].length = 3;
 
-    test('`_.clone` should shallow clone by default', 2, function() {
+    test('`_.clone` should perform a shallow clone', 2, function() {
       var expected = [{ 'a': 0 }, { 'b': 1 }],
           actual = _.clone(expected);
 
       deepEqual(actual, expected);
       ok(actual !== expected && actual[0] === expected[0]);
+    });
+
+    test('`_.clone` should work with `isDeep`', 2, function() {
+      var expected = [{ 'a': 0 }, { 'b': 1 }],
+          actual = _.clone(expected, true);
+
+      deepEqual(actual, expected);
+      ok(actual !== expected && actual[0] !== expected[0]);
     });
 
     test('`_.cloneDeep` should deep clone objects with circular references', 1, function() {
@@ -1261,18 +1544,18 @@
 
     _.each(['clone', 'cloneDeep'], function(methodName) {
       var func = _[methodName],
-          isDeep = methodName == 'cloneDeep',
-          klass = new Klass;
+          isDeep = methodName == 'cloneDeep';
 
       _.forOwn(objects, function(object, key) {
         test('`_.' + methodName + '` should clone ' + key, 2, function() {
-          var clone = func(object);
-          ok(_.isEqual(object, clone));
+          var actual = func(object);
+
+          ok(_.isEqual(actual, object));
 
           if (_.isObject(object)) {
-            notStrictEqual(clone, object);
+            notStrictEqual(actual, object);
           } else {
-            strictEqual(clone, object);
+            strictEqual(actual, object);
           }
         });
       });
@@ -1283,24 +1566,14 @@
         });
       });
 
-      _.each(typedArrays, function(type) {
-        test('`_.' + methodName + '` should clone ' + type + ' arrays', 2, function() {
-          var Ctor = root[type];
-          if (Ctor) {
-            var array = new Ctor(new ArrayBuffer(4)),
-                actual = func(array);
-
-            deepEqual(actual, array);
-            notStrictEqual(actual, array);
-          }
-          else {
-            skipTest(2);
-          }
+      _.each(errors, function(error) {
+        test('`_.' + methodName + '` should not clone ' + error.name + ' objects', 1, function() {
+          strictEqual(func(error), error);
         });
       });
 
       test('`_.' + methodName + '` should clone array buffers', 2, function() {
-        var buffer = ArrayBuffer && new ArrayBuffer(4);
+        var buffer = ArrayBuffer && new ArrayBuffer(10);
         if (buffer) {
           var actual = func(buffer);
           strictEqual(actual.byteLength, buffer.byteLength);
@@ -1311,27 +1584,37 @@
         }
       });
 
+      _.each(typedArrays, function(type) {
+        test('`_.' + methodName + '` should clone ' + type + ' arrays', 10, function() {
+          var Ctor = root[type];
+          if (Ctor) {
+            _.times(2, function(index) {
+              var buffer = new ArrayBuffer(24),
+                  array = index ? new Ctor(buffer, 8, 1) : new Ctor(buffer),
+                  actual = func(array);
+
+              deepEqual(actual, array);
+              notStrictEqual(actual, array);
+              strictEqual(actual.buffer === array.buffer, !isDeep);
+              strictEqual(actual.byteOffset, array.byteOffset);
+              strictEqual(actual.length, array.length);
+            });
+          }
+          else {
+            skipTest(10);
+          }
+        });
+      });
+
       test('`_.' + methodName + '` should clone problem JScript properties (test in IE < 9)', 2, function() {
         var actual = func(shadowedObject);
         deepEqual(actual, shadowedObject);
         notStrictEqual(actual, shadowedObject);
       });
 
-      test('`_.' + methodName + '` should perform a ' + (isDeep ? 'deep' : 'shallow') + ' clone when used as a callback for `_.map`', 2, function() {
-        var expected = [{ 'a': [0] }, { 'b': [1] }],
-            actual = _.map(expected, func);
-
-        deepEqual(actual, expected);
-
-        if (isDeep) {
-          ok(actual[0] !== expected[0] && actual[0].a !== expected[0].a && actual[1].b !== expected[1].b);
-        } else {
-          ok(actual[0] !== expected[0] && actual[0].a === expected[0].a && actual[1].b === expected[1].b);
-        }
-      });
-
-      test('`_.' + methodName + '` should pass the correct `callback` arguments', 1, function() {
-        var argsList = [];
+      test('`_.' + methodName + '` should provide the correct `callback` arguments', 1, function() {
+        var argsList = [],
+            klass = new Klass;
 
         func(klass, function() {
           argsList.push(slice.call(arguments));
@@ -1384,9 +1667,24 @@
         }
       });
 
+      test('`_.' + methodName + '` should perform a ' + (isDeep ? 'deep' : 'shallow') + ' clone when used as a callback for `_.map`', 3, function() {
+        var expected = [{ 'a': [0] }, { 'b': [1] }],
+            actual = _.map(expected, func);
+
+        deepEqual(actual, expected);
+
+        if (isDeep) {
+          ok(actual[0] !== expected[0] && actual[0].a !== expected[0].a && actual[1].b !== expected[1].b);
+        } else {
+          ok(actual[0] !== expected[0] && actual[0].a === expected[0].a && actual[1].b === expected[1].b);
+        }
+        actual = _.map(isDeep ? Object('abc') : 'abc', func);
+        deepEqual(actual, ['a', 'b', 'c']);
+      });
+
       test('`_.' + methodName + '` should return a unwrapped value when chaining', 2, function() {
         if (!isNpm) {
-          var object = objects['an object'],
+          var object = objects['objects'],
               actual = _(object)[methodName]();
 
           deepEqual(actual, object);
@@ -1409,13 +1707,14 @@
       deepEqual(_.compact(falsey.concat(array)), array);
     });
 
-    test('should return a wrapped value when chaining', 1, function() {
+    test('should return a wrapped value when chaining', 2, function() {
       if (!isNpm) {
         var actual = _(falsey).compact();
         ok(actual instanceof _);
+        deepEqual(actual.value(), []);
       }
       else {
-        skipTest();
+        skipTest(2);
       }
     });
   }());
@@ -1447,6 +1746,17 @@
       notStrictEqual(_.compose(_.noop), _.noop);
     });
 
+    test('should return a noop function when no arguments are provided', 2, function() {
+      var composed = _.compose();
+
+      try {
+        strictEqual(composed(), undefined);
+      } catch(e) {
+        ok(false);
+      }
+      notStrictEqual(composed, _.noop);
+    });
+
     test('should return a wrapped value when chaining', 1, function() {
       if (!isNpm) {
         var actual = _(_.noop).compose();
@@ -1465,7 +1775,7 @@
   (function() {
     test('should create a function that always returns `value`', 1, function() {
       var object = { 'a': 1 },
-          values = falsey.concat(null, null, 1, 'a'),
+          values = Array(2).concat(empties, true, 1, 'a'),
           constant = _.constant(object),
           expected = _.map(values, function() { return true; });
 
@@ -1487,8 +1797,10 @@
       var expected = _.map(falsey, function() { return true; });
 
       var actual = _.map(falsey, function(value, index) {
-        var constant = index ? _.constant(value) : _.constant();
-        return constant() === value || _.isNaN(value);
+        var constant = index ? _.constant(value) : _.constant(),
+            result = constant();
+
+        return result === value || (_.isNaN(result) && _.isNaN(value));
       });
 
       deepEqual(actual, expected);
@@ -1615,7 +1927,7 @@
       deepEqual(actual, { '4': 1, '6':  2 });
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.countBy(array, function() {
@@ -1642,7 +1954,7 @@
       deepEqual(actual.hasOwnProperty, 2);
     });
 
-    test('should work with a string for `callback`', 1, function() {
+    test('should work with a "_.pluck" style `callback`', 1, function() {
       var actual = _.countBy(['one', 'two', 'three'], 'length');
       deepEqual(actual, { '3': 2, '5': 1 });
     });
@@ -1739,17 +2051,16 @@
   QUnit.module('lodash.callback');
 
   (function() {
-    test('should create a callback with a falsey `thisArg`', 1, function() {
-      var values = _.map(falsey, function(value) {
-        return Object(value == null ? root : value);
+    test('should provide arguments to `func`', 1, function() {
+      var args,
+          expected = ['a', 'b', 'c', 'd', 'e'];
+
+      var callback = _.callback(function() {
+        args = slice.call(arguments);
       });
 
-      var actual = _.map(values, function(value) {
-        var callback = _.callback(function() { return this; }, value);
-        return callback();
-      });
-
-      deepEqual(actual, values);
+      callback.apply(null, expected);
+      deepEqual(args, expected);
     });
 
     test('should return `_.identity` when `func` is nullish', 2, function() {
@@ -1772,6 +2083,25 @@
       });
     });
 
+    test('should create a callback with a falsey `thisArg`', 1, function() {
+      var fn = function() { return this; },
+          object = {};
+
+      var expected = _.map(falsey, function(value) {
+        var result = fn.call(value);
+        return (result && result.Array) ? object : result;
+      });
+
+      var actual = _.map(falsey, function(value) {
+        var callback = _.callback(fn, value),
+            result = callback();
+
+        return (result && result.Array) ? object : result;
+      });
+
+      ok(_.isEqual(actual, expected));
+    });
+
     test('should return a callback created by `_.matches` when `func` is an object', 2, function() {
       var callback = _.callback({ 'a': 1 });
       strictEqual(callback({ 'a': 1, 'b': 2 }), true);
@@ -1786,18 +2116,6 @@
 
       callback = _.callback('0');
       strictEqual(callback(array), 'a');
-    });
-
-    test('should work without an `argCount`', 1, function() {
-      var args,
-          expected = ['a', 'b', 'c', 'd', 'e'];
-
-      var callback = _.callback(function() {
-        args = slice.call(arguments);
-      });
-
-      callback.apply(null, expected);
-      deepEqual(args, expected);
     });
 
     test('should work with functions created by `_.partial` and `_.partialRight`', 2, function() {
@@ -1817,15 +2135,18 @@
       deepEqual(callback(2), expected);
     });
 
-    test('should return the function provided if already bound with `Function#bind`', 1, function() {
-      function a() {}
+    test('should support binding built-in methods', 2, function() {
+      var object = { 'a': 1 },
+          callback = _.callback(objectProto.hasOwnProperty, object);
 
-      var object = {},
-          bound = a.bind && a.bind(object);
+      strictEqual(callback('a'), true);
 
-      if (bound && !('prototype' in bound)) {
-        var bound = a.bind(object);
-        strictEqual(_.callback(bound, object), bound);
+      var fn = function () {},
+          bound = fn.bind && fn.bind(object);
+
+      if (bound) {
+        callback = _.callback(bound, object);
+        notStrictEqual(callback, bound);
       }
       else {
         skipTest();
@@ -1856,16 +2177,16 @@
 
       if (defineProperty && _.support.funcDecomp) {
         _.callback(a, object);
-        ok(expando in a);
+        ok(EXPANDO in a);
 
         _.callback(b, object);
-        ok(!(expando in b));
+        ok(!(EXPANDO in b));
 
         if (_.support.funcNames) {
           _.support.funcNames = false;
           _.callback(c, object);
 
-          ok(expando in c);
+          ok(EXPANDO in c);
           _.support.funcNames = true;
         }
         else {
@@ -1882,7 +2203,7 @@
 
       if (defineProperty && lodashBizarro) {
         lodashBizarro.callback(a, {});
-        ok(!(expando in a));
+        ok(!(EXPANDO in a));
       }
       else {
         skipTest();
@@ -1908,6 +2229,15 @@
       deepEqual(curried(1, 2, 3, 4), expected);
     });
 
+    test('should allow specifying `arity`', 3, function(){
+      var curried = _.curry(fn, 3),
+          expected = [1, 2, 3];
+
+      deepEqual(curried(1)(2, 3), expected);
+      deepEqual(curried(1, 2)(3), expected);
+      deepEqual(curried(1, 2, 3), expected);
+    });
+
     test('should work with partialed methods', 2, function() {
       var curried = _.curry(fn),
           expected = [1, 2, 3, 4];
@@ -1922,16 +2252,20 @@
     });
 
     test('should support placeholders', 4, function() {
-      if (!isModularize) {
-        var curried = _.curry(fn);
-        deepEqual(curried(1)(_, 3)(_, 4)(2), [1, 2, 3, 4]);
-        deepEqual(curried(_, 2)(1)(_, 4)(3), [1, 2, 3, 4]);
-        deepEqual(curried(_, _, 3)(_, 2)(_, 4)(1), [1, 2, 3, 4]);
-        deepEqual(curried(_, _, _, 4)(_, _, 3)(_, 2)(1), [1, 2, 3, 4]);
-      }
-      else {
-        skipTest(4);
-      }
+      var curried = _.curry(fn),
+          ph = curried.placeholder;
+
+      deepEqual(curried(1)(ph, 3)(ph, 4)(2), [1, 2, 3, 4]);
+      deepEqual(curried(ph, 2)(1)(ph, 4)(3), [1, 2, 3, 4]);
+      deepEqual(curried(ph, ph, 3)(ph, 2)(ph, 4)(1), [1, 2, 3, 4]);
+      deepEqual(curried(ph, ph, ph, 4)(ph, ph, 3)(ph, 2)(1), [1, 2, 3, 4]);
+    });
+
+    test('should provide additional arguments after reaching the target arity', 3, function() {
+      var curried = _.curry(fn, 3);
+      deepEqual(curried(1)(2, 3, 4), [1, 2, 3, 4]);
+      deepEqual(curried(1, 2)(3, 4, 5), [1, 2, 3, 4, 5]);
+      deepEqual(curried(1, 2, 3, 4, 5, 6), [1, 2, 3, 4, 5, 6]);
     });
 
     test('should return a function with a `length` of `0`', 6, function() {
@@ -1955,7 +2289,7 @@
       strictEqual(new curried(true), object);
     });
 
-    test('should not alter the `this` binding', 9, function() {
+    test('should not set a `this` binding', 9, function() {
       function fn(a, b, c) {
         var value = this || {};
         return [value[a], value[b], value[c]];
@@ -1975,6 +2309,109 @@
       object.curried = _.curry(fn);
       deepEqual(object.curried('a')('b')('c'), Array(3));
       deepEqual(object.curried('a', 'b')('c'), Array(3));
+      deepEqual(object.curried('a', 'b', 'c'), expected);
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.curryRight');
+
+  (function() {
+    function fn(a, b, c, d) {
+      return slice.call(arguments);
+    }
+
+    test('should curry based on the number of arguments provided', 3, function() {
+      var curried = _.curryRight(fn),
+          expected = [1, 2, 3, 4];
+
+      deepEqual(curried(4)(3)(2)(1), expected);
+      deepEqual(curried(3, 4)(1, 2), expected);
+      deepEqual(curried(1, 2, 3, 4), expected);
+    });
+
+    test('should allow specifying `arity`', 3, function(){
+      var curried = _.curryRight(fn, 3),
+          expected = [1, 2, 3];
+
+      deepEqual(curried(3)(1, 2), expected);
+      deepEqual(curried(2, 3)(1), expected);
+      deepEqual(curried(1, 2, 3), expected);
+    });
+
+    test('should work with partialed methods', 2, function() {
+      var curried = _.curryRight(fn),
+          expected = [1, 2, 3, 4];
+
+      var a = _.partialRight(curried, 4),
+          b = _.partialRight(a, 3),
+          c = _.bind(b, null, 1),
+          d = _.partial(b(2), 1);
+
+      deepEqual(c(2), expected);
+      deepEqual(d(), expected);
+    });
+
+    test('should support placeholders', 4, function() {
+      var curried = _.curryRight(fn),
+          expected = [1, 2, 3, 4],
+          ph = curried.placeholder;
+
+      deepEqual(curried(4)(2, ph)(1, ph)(3), expected);
+      deepEqual(curried(3, ph)(4)(1, ph)(2), expected);
+      deepEqual(curried(ph, ph, 4)(ph, 3)(ph, 2)(1), expected);
+      deepEqual(curried(ph, ph, ph, 4)(ph, ph, 3)(ph, 2)(1), expected);
+    });
+
+    test('should provide additional arguments after reaching the target arity', 3, function() {
+      var curried = _.curryRight(fn, 3);
+      deepEqual(curried(4)(1, 2, 3), [1, 2, 3, 4]);
+      deepEqual(curried(4, 5)(1, 2, 3), [1, 2, 3, 4, 5]);
+      deepEqual(curried(1, 2, 3, 4, 5, 6), [1, 2, 3, 4, 5, 6]);
+    });
+
+    test('should return a function with a `length` of `0`', 6, function() {
+      _.times(2, function(index) {
+        var curried = index ? _.curryRight(fn, 4) : _.curryRight(fn);
+        strictEqual(curried.length, 0);
+        strictEqual(curried(4).length, 0);
+        strictEqual(curried(3, 4).length, 0);
+      });
+    });
+
+    test('ensure `new curried` is an instance of `func`', 2, function() {
+      function Foo(value) {
+        return value && object;
+      }
+
+      var curried = _.curryRight(Foo),
+          object = {};
+
+      ok(new curried(false) instanceof Foo);
+      strictEqual(new curried(true), object);
+    });
+
+    test('should not set a `this` binding', 9, function() {
+      function fn(a, b, c) {
+        var value = this || {};
+        return [value[a], value[b], value[c]];
+      }
+
+      var object = { 'a': 1, 'b': 2, 'c': 3 },
+          expected = [1, 2, 3];
+
+      deepEqual(_.curryRight(_.bind(fn, object), 3)('c')('b')('a'), expected);
+      deepEqual(_.curryRight(_.bind(fn, object), 3)('b', 'c')('a'), expected);
+      deepEqual(_.curryRight(_.bind(fn, object), 3)('a', 'b', 'c'), expected);
+
+      deepEqual(_.bind(_.curryRight(fn), object)('c')('b')('a'), Array(3));
+      deepEqual(_.bind(_.curryRight(fn), object)('b', 'c')('a'), Array(3));
+      deepEqual(_.bind(_.curryRight(fn), object)('a', 'b', 'c'), expected);
+
+      object.curried = _.curryRight(fn);
+      deepEqual(object.curried('c')('b')('a'), Array(3));
+      deepEqual(object.curried('b', 'c')('a'), Array(3));
       deepEqual(object.curried('a', 'b', 'c'), expected);
     });
   }());
@@ -2143,7 +2580,7 @@
       }
     });
 
-    test('should support a `maxWait` option', 2, function() {
+    asyncTest('should support a `maxWait` option', 1, function() {
       if (!(isRhino && isModularize)) {
         var limit = (argv || isPhantom) ? 1000 : 320,
             withCount = 0,
@@ -2162,11 +2599,16 @@
           withMaxWait();
           withoutMaxWait();
         }
-        ok(withCount > 0);
-        ok(!withoutCount);
+        var actual = [Boolean(withCount), Boolean(withoutCount)];
+
+        setTimeout(function() {
+          deepEqual(actual, [true, false]);
+          QUnit.start();
+        }, 1);
       }
       else {
-        skipTest(2);
+        skipTest();
+        QUnit.start();
       }
     });
 
@@ -2400,8 +2842,8 @@
     });
 
     test('should work with large arrays', 1, function() {
-      var array1 = _.range(largeArraySize + 1),
-          array2 = _.range(largeArraySize),
+      var array1 = _.range(LARGE_ARRAY_SIZE + 1),
+          array2 = _.range(LARGE_ARRAY_SIZE),
           a = {},
           b = {},
           c = {};
@@ -2409,13 +2851,13 @@
       array1.push(a, b, c);
       array2.push(b, c, a);
 
-      deepEqual(_.difference(array1, array2), [largeArraySize]);
+      deepEqual(_.difference(array1, array2), [LARGE_ARRAY_SIZE]);
     });
 
     test('should work with large arrays of objects', 1, function() {
       var object1 = {},
           object2 = {},
-          largeArray = _.times(largeArraySize, _.constant(object1));
+          largeArray = _.times(LARGE_ARRAY_SIZE, _.constant(object1));
 
       deepEqual(_.difference([object1, object2], largeArray), [object2]);
     });
@@ -2427,6 +2869,238 @@
       deepEqual(_.difference(null, array, null, args), [0, null]);
     });
   }(1, 2, 3));
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.drop');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    test('should drop the first two elements', 1, function() {
+      deepEqual(_.drop(array, 2), [3]);
+    });
+
+    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
+      var expected = _.map(falsey, function(value) {
+        return value == null ? [2, 3] : array;
+      });
+
+      var actual = _.map(falsey, function(n) {
+        return _.drop(array, n);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should return all elements when `n` < `1`', 3, function() {
+      _.each([0, -1, -Infinity], function(n) {
+        deepEqual(_.drop(array, n), array);
+      });
+    });
+
+    test('should return an empty array when `n` >= `array.length`', 4, function() {
+      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
+        deepEqual(_.drop(array, n), []);
+      });
+    });
+
+    test('should work when used as a callback for `_.map`', 1, function() {
+      var array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+          actual = _.map(array, _.drop);
+
+      deepEqual(actual, [[2, 3], [5, 6], [8, 9]]);
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).drop(2);
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [3]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.dropRight');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    test('should drop the last two elements', 1, function() {
+      deepEqual(_.dropRight(array, 2), [1]);
+    });
+
+    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
+      var expected = _.map(falsey, function(value) {
+        return value == null ? [1, 2] : array;
+      });
+
+      var actual = _.map(falsey, function(n) {
+        return _.dropRight(array, n);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should return all elements when `n` < `1`', 3, function() {
+      _.each([0, -1, -Infinity], function(n) {
+        deepEqual(_.dropRight(array, n), array);
+      });
+    });
+
+    test('should return an empty array when `n` >= `array.length`', 4, function() {
+      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
+        deepEqual(_.dropRight(array, n), []);
+      });
+    });
+
+    test('should work when used as a callback for `_.map`', 1, function() {
+      var array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+          actual = _.map(array, _.dropRight);
+
+      deepEqual(actual, [[1, 2], [4, 5], [7, 8]]);
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).dropRight(2);
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [1]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.dropRightWhile');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    var objects = [
+      { 'a': 0, 'b': 0 },
+      { 'a': 1, 'b': 1 },
+      { 'a': 2, 'b': 2 }
+    ];
+
+    test('should drop elements while `predicate` returns truthy', 1, function() {
+      var actual = _.dropRightWhile(array, function(num) {
+        return num > 1;
+      });
+
+      deepEqual(actual, [1]);
+    });
+
+    test('should provide the correct `predicate` arguments', 1, function() {
+      var args;
+
+      _.dropRightWhile(array, function() {
+        args = slice.call(arguments);
+      });
+
+      deepEqual(args, [3, 2, array]);
+    });
+
+    test('should support the `thisArg` argument', 1, function() {
+      var actual = _.dropRightWhile(array, function(num, index) {
+        return this[index] > 1;
+      }, array);
+
+      deepEqual(actual, [1]);
+    });
+
+    test('should work with an object for `predicate`', 1, function() {
+      deepEqual(_.dropRightWhile(objects, { 'b': 2 }), objects.slice(0, 2));
+    });
+
+    test('should work with a "_.pluck" style `predicate`', 1, function() {
+      deepEqual(_.dropRightWhile(objects, 'b'), objects.slice(0, 1));
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).dropRightWhile(function(num) {
+          return num > 1;
+        });
+
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [1]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.dropWhile');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    var objects = [
+      { 'a': 2, 'b': 2 },
+      { 'a': 1, 'b': 1 },
+      { 'a': 0, 'b': 0 }
+    ];
+
+    test('should drop elements while `predicate` returns truthy', 1, function() {
+      var actual = _.dropWhile(array, function(num) {
+        return num < 3;
+      });
+
+      deepEqual(actual, [3]);
+    });
+
+    test('should provide the correct `predicate` arguments', 1, function() {
+      var args;
+
+      _.dropWhile(array, function() {
+        args = slice.call(arguments);
+      });
+
+      deepEqual(args, [1, 0, array]);
+    });
+
+    test('should support the `thisArg` argument', 1, function() {
+      var actual = _.dropWhile(array, function(num, index) {
+        return this[index] < 3;
+      }, array);
+
+      deepEqual(actual, [3]);
+    });
+
+    test('should work with an object for `predicate`', 1, function() {
+      deepEqual(_.dropWhile(objects, { 'b': 2 }), objects.slice(1));
+    });
+
+    test('should work with a "_.pluck" style `predicate`', 1, function() {
+      deepEqual(_.dropWhile(objects, 'b'), objects.slice(2));
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).dropWhile(function(num) {
+          return num < 3;
+        });
+
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [3]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
 
   /*--------------------------------------------------------------------------*/
 
@@ -2448,7 +3122,7 @@
     });
 
     test('should work with `position` >= `string.length`', 4, function() {
-      _.each([3, 5, maxSafeInteger, Infinity], function(position) {
+      _.each([3, 5, MAX_SAFE_INTEGER, Infinity], function(position) {
         strictEqual(_.endsWith(string, 'c', position), true);
       });
     });
@@ -2473,7 +3147,7 @@
     });
 
     test('should always return `true` when `target` is an empty string regardless of `position`', 1, function() {
-      ok(_.every([-Infinity, NaN, -3, -1, 0, 1, 2, 3, 5, maxSafeInteger, Infinity], function(position) {
+      ok(_.every([-Infinity, NaN, -3, -1, 0, 1, 2, 3, 5, MAX_SAFE_INTEGER, Infinity], function(position) {
         return _.endsWith(string, '', position, true);
       }));
     });
@@ -2486,6 +3160,9 @@
   (function() {
     var escaped = '&amp;&lt;&gt;&quot;&#39;&#96;\/',
         unescaped = '&<>"\'`\/';
+
+    escaped += escaped;
+    unescaped += unescaped;
 
     test('should escape values', 1, function() {
       strictEqual(_.escape(unescaped), escaped);
@@ -2509,10 +3186,13 @@
   QUnit.module('lodash.escapeRegExp');
 
   (function() {
-    test('should escape values', 1, function() {
-      var escaped = '\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\/\\\\',
-          unescaped = '.*+?^${}()|[\]\/\\';
+    var escaped = '\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\/\\\\',
+        unescaped = '.*+?^${}()|[\]\/\\';
 
+    escaped += escaped;
+    unescaped += unescaped;
+
+    test('should escape values', 1, function() {
       strictEqual(_.escapeRegExp(unescaped), escaped);
     });
 
@@ -2538,11 +3218,11 @@
       deepEqual(actual, expected);
     });
 
-    test('should return `true` if the callback returns truthy for all elements in the collection', 1, function() {
+    test('should return `true` if `predicate` returns truthy for all elements in the collection', 1, function() {
       strictEqual(_.every([true, 1, 'x'], _.identity), true);
     });
 
-    test('should return `false` as soon as the callback result is falsey', 1, function() {
+    test('should return `false` as soon as `predicate` returns falsey', 1, function() {
       strictEqual(_.every([true, null, true], _.identity), false);
     });
 
@@ -2550,7 +3230,7 @@
       strictEqual(_.every([undefined, undefined, undefined], _.identity), false);
     });
 
-    test('should use `_.identity` when no callback is provided', 2, function() {
+    test('should use `_.identity` when no predicate is provided', 2, function() {
       strictEqual(_.every([0]), false);
       strictEqual(_.every([1]), true);
     });
@@ -2562,36 +3242,14 @@
 
   /*--------------------------------------------------------------------------*/
 
-  QUnit.module('source property checks');
-
-  _.each(['assign', 'defaults', 'merge'], function(methodName) {
-    var func = _[methodName];
-
-    test('`_.' + methodName + '` should not assign inherited `source` properties', 1, function() {
-      function Foo() {}
-      Foo.prototype = { 'a': 1 };
-
-      deepEqual(func({}, new Foo), {});
-    });
-
-    test('should work when used as a callback for `_.reduce`', 1, function() {
-      var array = [{ 'a':  1 }, { 'b': 2 }, { 'c': 3 }],
-          actual = _.reduce(array, _.merge);
-
-      deepEqual(actual, { 'a':  1, 'b': 2, 'c': 3 });
-    });
-  });
-
-  /*--------------------------------------------------------------------------*/
-
   QUnit.module('strict mode checks');
 
   _.each(['assign', 'bindAll', 'defaults'], function(methodName) {
     var func = _[methodName];
 
-    test('`_.' + methodName + '` should not throw strict mode errors', 1, function() {
+    test('`_.' + methodName + '` should ' + (isStrict ? '' : 'not ') + 'throw strict mode errors', 1, function() {
       var object = { 'a': null, 'b': function(){} },
-          pass = true;
+          pass = !isStrict;
 
       if (freeze) {
         freeze(object);
@@ -2602,7 +3260,7 @@
             func(object, { 'a': 1 });
           }
         } catch(e) {
-          pass = false;
+          pass = !pass;
         }
         ok(pass);
       }
@@ -2617,7 +3275,7 @@
   QUnit.module('lodash.filter');
 
   (function() {
-    test('should return elements the `callback` returns truthy for', 1, function() {
+    test('should return elements `predicate` returns truthy for', 1, function() {
       var actual = _.filter([1, 2, 3], function(num) {
         return num % 2;
       });
@@ -2686,11 +3344,11 @@
         strictEqual(func(objects, function(object) { return object.a === 3; }), expected[1]);
       });
 
-      test('should work with an object for `callback`', 1, function() {
+      test('should work with an object for `predicate`', 1, function() {
         strictEqual(func(objects, { 'b': 2 }), expected[2]);
       });
 
-      test('should work with a string for `callback`', 1, function() {
+      test('should work with a "_.pluck" style `predicate`', 1, function() {
         strictEqual(func(objects, 'b'), expected[3]);
       });
 
@@ -2800,42 +3458,8 @@
   (function() {
     var array = [1, 2, 3];
 
-    var objects = [
-      { 'a': 2, 'b': 2 },
-      { 'a': 1, 'b': 1 },
-      { 'a': 0, 'b': 0 }
-    ];
-
     test('should return the first element', 1, function() {
       strictEqual(_.first(array), 1);
-    });
-
-    test('should return the first two elements', 1, function() {
-      deepEqual(_.first(array, 2), [1, 2]);
-    });
-
-    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
-      var expected = _.map(falsey, function(value) {
-        return value == null ? 1 : [];
-      });
-
-      var actual = _.map(falsey, function(n) {
-        return _.first(array, n);
-      });
-
-      deepEqual(actual, expected);
-    });
-
-    test('should return an empty array when `n` < `1`', 3, function() {
-      _.each([0, -1, -Infinity], function(n) {
-        deepEqual(_.first(array, n), []);
-      });
-    });
-
-    test('should return all elements when `n` >= `array.length`', 4, function() {
-      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
-        deepEqual(_.first(array, n), array);
-      });
     });
 
     test('should return `undefined` when querying empty arrays', 1, function() {
@@ -2849,18 +3473,215 @@
       deepEqual(actual, [1, 4, 7]);
     });
 
-    test('should work with a callback', 1, function() {
-      var actual = _.first(array, function(num) {
+    test('should return an unwrapped value when chaining', 1, function() {
+      if (!isNpm) {
+        strictEqual(_(array).first(), 1);
+      }
+      else {
+        skipTest();
+      }
+    });
+
+    test('should be aliased', 1, function() {
+      strictEqual(_.head, _.first);
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.take');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    test('should take the first two elements', 1, function() {
+      deepEqual(_.take(array, 2), [1, 2]);
+    });
+
+    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
+      var expected = _.map(falsey, function(value) {
+        return value == null ? [1] : [];
+      });
+
+      var actual = _.map(falsey, function(n) {
+        return _.take(array, n);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should return an empty array when `n` < `1`', 3, function() {
+      _.each([0, -1, -Infinity], function(n) {
+        deepEqual(_.take(array, n), []);
+      });
+    });
+
+    test('should return all elements when `n` >= `array.length`', 4, function() {
+      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
+        deepEqual(_.take(array, n), array);
+      });
+    });
+
+    test('should work when used as a callback for `_.map`', 1, function() {
+      var array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+          actual = _.map(array, _.take);
+
+      deepEqual(actual, [[1], [4], [7]]);
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).take(2);
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [1, 2]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.takeRight');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    test('should take the last two elements', 1, function() {
+      deepEqual(_.takeRight(array, 2), [2, 3]);
+    });
+
+    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
+      var expected = _.map(falsey, function(value) {
+        return value == null ? [3] : [];
+      });
+
+      var actual = _.map(falsey, function(n) {
+        return _.takeRight(array, n);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should return an empty array when `n` < `1`', 3, function() {
+      _.each([0, -1, -Infinity], function(n) {
+        deepEqual(_.takeRight(array, n), []);
+      });
+    });
+
+    test('should return all elements when `n` >= `array.length`', 4, function() {
+      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
+        deepEqual(_.takeRight(array, n), array);
+      });
+    });
+
+    test('should work when used as a callback for `_.map`', 1, function() {
+      var array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+          actual = _.map(array, _.takeRight);
+
+      deepEqual(actual, [[3], [6], [9]]);
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).takeRight(2);
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [2, 3]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.takeRightWhile');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    var objects = [
+      { 'a': 0, 'b': 0 },
+      { 'a': 1, 'b': 1 },
+      { 'a': 2, 'b': 2 }
+    ];
+
+    test('should take elements while `predicate` returns truthy', 1, function() {
+      var actual = _.takeRightWhile(array, function(num) {
+        return num > 1;
+      });
+
+      deepEqual(actual, [2, 3]);
+    });
+
+    test('should provide the correct `predicate` arguments', 1, function() {
+      var args;
+
+      _.takeRightWhile(array, function() {
+        args = slice.call(arguments);
+      });
+
+      deepEqual(args, [3, 2, array]);
+    });
+
+    test('should support the `thisArg` argument', 1, function() {
+      var actual = _.takeRightWhile(array, function(num, index) {
+        return this[index] > 1;
+      }, array);
+
+      deepEqual(actual, [2, 3]);
+    });
+
+    test('should work with a "_.pluck" style `predicate`', 1, function() {
+      deepEqual(_.takeRightWhile(objects, 'b'), objects.slice(1));
+    });
+
+    test('should work with a "_.where" style `predicate`', 1, function() {
+      deepEqual(_.takeRightWhile(objects, { 'b': 2 }), objects.slice(2));
+    });
+
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).takeRightWhile(function(num) {
+          return num > 1;
+        });
+
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [2, 3]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.takeWhile');
+
+  (function() {
+    var array = [1, 2, 3];
+
+    var objects = [
+      { 'a': 2, 'b': 2 },
+      { 'a': 1, 'b': 1 },
+      { 'a': 0, 'b': 0 }
+    ];
+
+    test('should take elements while `predicate` returns truthy', 1, function() {
+      var actual = _.takeWhile(array, function(num) {
         return num < 3;
       });
 
       deepEqual(actual, [1, 2]);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `predicate` arguments', 1, function() {
       var args;
 
-      _.first(array, function() {
+      _.takeWhile(array, function() {
         args = slice.call(arguments);
       });
 
@@ -2868,178 +3689,160 @@
     });
 
     test('should support the `thisArg` argument', 1, function() {
-      var actual = _.first(array, function(num, index) {
+      var actual = _.takeWhile(array, function(num, index) {
         return this[index] < 3;
       }, array);
 
       deepEqual(actual, [1, 2]);
     });
 
-    test('should work with an object for `callback`', 1, function() {
-      deepEqual(_.first(objects, { 'b': 2 }), objects.slice(0, 1));
+    test('should work with a "_.pluck" style `predicate`', 1, function() {
+      deepEqual(_.takeWhile(objects, 'b'), objects.slice(0, 2));
     });
 
-    test('should work with a string for `callback`', 1, function() {
-      deepEqual(_.first(objects, 'b'), objects.slice(0, 2));
+    test('should work with a "_.where" style `predicate`', 1, function() {
+      deepEqual(_.takeWhile(objects, { 'b': 2 }), objects.slice(0, 1));
     });
 
-    test('should chain when passing `n`, `callback`, or `thisArg`', 3, function() {
+    test('should return a wrapped value when chaining', 2, function() {
       if (!isNpm) {
-        var actual = _(array).first(2);
-
-        ok(actual instanceof _);
-
-        actual = _(array).first(function(num) {
+        var actual = _(array).takeWhile(function(num) {
           return num < 3;
         });
 
         ok(actual instanceof _);
+        deepEqual(actual.value(), [1, 2]);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+  }());
 
-        actual = _(array).first(function(num, index) {
-          return this[index] < 3;
-        }, array);
+  /*--------------------------------------------------------------------------*/
 
-        ok(actual instanceof _);
+  QUnit.module('flatten methods');
+
+  (function() {
+    var args = arguments;
+
+    test('should perform a shallow flatten', 1, function() {
+      var array = [[['a']], [['b']]];
+      deepEqual(_.flatten(array), [['a'], ['b']]);
+    });
+
+    test('should work with `isDeep`', 2, function() {
+      var array = [[['a']], [['b']]],
+          expected = ['a', 'b'];
+
+      deepEqual(_.flatten(array, true), expected);
+      deepEqual(_.flattenDeep(array), expected);
+    });
+
+    test('should flatten `arguments` objects', 3, function() {
+      var array = [args, [args]],
+          expected = [1, 2, 3, args];
+
+      deepEqual(_.flatten(array), expected);
+
+      expected = [1, 2, 3, 1, 2, 3];
+      deepEqual(_.flatten(array, true), expected);
+      deepEqual(_.flattenDeep(array), expected);
+    });
+
+    test('should execute without options when used as a callback for `_.map`', 2, function() {
+      var array = [[[['a']]], [[['b']]]];
+
+      deepEqual(_.map(array, _.flatten), [[['a']], [['b']]]);
+      deepEqual(_.map(array, _.flattenDeep), [['a'], ['b']]);
+    });
+
+    test('should treat sparse arrays as dense', 6, function() {
+      var array = [[1, 2, 3], Array(3)],
+          expected = [1, 2, 3];
+
+      expected.push(undefined, undefined, undefined);
+
+      _.each([_.flatten(array), _.flatten(array, true), _.flattenDeep(array)], function(actual) {
+        deepEqual(actual, expected);
+        ok('4' in actual);
+      });
+    });
+
+    test('should work with extremely large arrays', 3, function() {
+      // test in modern browsers
+      if (freeze) {
+        var expected = Array(5e5);
+
+        _.times(3, function(index) {
+          try {
+            if (index) {
+              var actual = actual == 1 ? _.flatten([expected], true) : _.flattenDeep([expected]);
+            } else {
+              actual = _.flatten(expected);
+            }
+            deepEqual(actual, expected);
+          } catch(e) {
+            ok(false);
+          }
+        });
       }
       else {
         skipTest(3);
       }
     });
 
-    test('should not chain when arguments are not provided', 1, function() {
-      if (!isNpm) {
-        var actual = _(array).first();
-        strictEqual(actual, 1);
-      }
-      else {
-        skipTest();
-      }
-    });
-
-    test('should be aliased', 2, function() {
-      strictEqual(_.head, _.first);
-      strictEqual(_.take, _.first);
-    });
-  }());
-
-  /*--------------------------------------------------------------------------*/
-
-  QUnit.module('lodash.flatten');
-
-  (function() {
-    var args = arguments,
-        array = [{ 'a': [1, [2]] }, { 'a': [3] }];
-
-    test('should flatten `arguments` objects', 1, function() {
-      var actual = _.flatten([args, args]);
-      deepEqual(actual, [1, 2, 3, 1, 2, 3]);
-    });
-
-    test('should work with a callback', 1, function() {
-      var actual = _.flatten(array, function(object) {
-        return object.a;
-      });
-
-      deepEqual(actual, [1, 2, 3]);
-    });
-
-    test('should work with `isShallow` and `callback`', 1, function() {
-      var actual = _.flatten(array, true, function(object) {
-        return object.a;
-      });
-
-      deepEqual(actual, [1, [2], 3]);
-    });
-
-    test('should pass the correct `callback` arguments', 1, function() {
-      var args;
-
-      _.flatten(array, function() {
-        args || (args = slice.call(arguments));
-      });
-
-      deepEqual(args, [array[0], 0, array]);
-    });
-
-    test('should support the `thisArg` argument', 1, function() {
-      var actual = _.flatten(array, function(object, index) {
-        return this[index].a;
-      }, array);
-
-      deepEqual(actual, [1, 2, 3]);
-    });
-
-    test('should work with a string for `callback`', 1, function() {
-      deepEqual(_.flatten(array, 'a'), [1, 2, 3]);
-    });
-
-    test('should perform a deep flatten when used as a callback for `_.map`', 1, function() {
-      var array = [[[['a']]], [[['b']]]],
-          actual = _.map(array, _.flatten);
-
-      deepEqual(actual, [['a'], ['b']]);
-    });
-
-    test('should treat sparse arrays as dense', 4, function() {
-      var array = [[1, 2, 3], Array(3)],
-          expected = [1, 2, 3],
-          actual1 = _.flatten(array),
-          actual2 = _.flatten(array, true);
-
-      expected.push(undefined, undefined, undefined);
-
-      deepEqual(actual1, expected);
-      ok('4' in actual1);
-
-      deepEqual(actual2, expected);
-      ok('4' in actual2);
-    });
-
-    test('should work with extremely large arrays', 1, function() {
-      // test in modern browsers
-      if (freeze) {
-        try {
-          var expected = Array(5e5),
-              actual = _.flatten([expected]);
-
-          deepEqual(actual, expected)
-        } catch(e) {
-          ok(false);
-        }
-      } else {
-        skipTest();
-      }
-    });
-
-    test('should work with empty arrays', 1, function() {
-      var actual = _.flatten([[], [[]], [[], [[[]]]]]);
-      deepEqual(actual, []);
-    });
-
-    test('should flatten nested arrays', 1, function() {
-      var array = [1, [2], [3, [[4]]]],
-          expected = [1, 2, 3, 4];
+    test('should work with empty arrays', 3, function() {
+      var array = [[], [[]], [[], [[[]]]]],
+          expected = [[], [], [[[]]]];
 
       deepEqual(_.flatten(array), expected);
+
+      expected = [];
+      deepEqual(_.flatten(array, true), expected);
+      deepEqual(_.flattenDeep(array), expected);
     });
 
-    test('should support shallow flattening nested arrays', 1, function() {
+    test('should support flattening of nested arrays', 3, function() {
       var array = [1, [2], [3, [4]]],
           expected = [1, 2, 3, [4]];
 
+      deepEqual(_.flatten(array), expected);
+
+      expected = [1, 2, 3, 4];
       deepEqual(_.flatten(array, true), expected);
+      deepEqual(_.flattenDeep(array), expected);
     });
 
-    test('should support shallow flattening arrays of other arrays', 1, function() {
-      var array = [[1], [2], [3], [[4]]],
-          expected = [1, 2, 3, [4]];
+    test('should return an empty array for non array-like objects', 3, function() {
+      var expected = [];
 
-      deepEqual(_.flatten(array, true), expected);
+      deepEqual(_.flatten({ 'a': 1 }), expected);
+      deepEqual(_.flatten({ 'a': 1 }, true), expected);
+      deepEqual(_.flattenDeep({ 'a': 1 }), expected);
     });
 
-    test('should return an empty array for non array-like objects', 1, function() {
-      var actual = _.flatten({ 'a': 1 }, _.identity);
-      deepEqual(actual, []);
+    test('should return a wrapped value when chaining', 6, function() {
+      if (!isNpm) {
+        var wrapped = _([1, [2], [3, [4]]]),
+            actual = wrapped.flatten(),
+            expected = [1, 2, 3, [4]];
+
+        ok(actual instanceof _);
+        deepEqual(actual.value(), expected);
+
+        expected = [1, 2, 3, 4];
+        actual = wrapped.flatten(true);
+        ok(actual instanceof _);
+        deepEqual(actual.value(), expected);
+
+        actual = wrapped.flattenDeep();
+        ok(actual instanceof _);
+        deepEqual(actual.value(), expected);
+      }
+      else {
+        skipTest(6);
+      }
     });
   }(1, 2, 3));
 
@@ -3141,11 +3944,6 @@
       'some'
     ];
 
-    var boolMethods = [
-      'every',
-      'some'
-    ];
-
     var collectionMethods = [
       'countBy',
       'every',
@@ -3193,11 +3991,18 @@
       'forOwnRight'
     ];
 
+    var unwrappedMethods = [
+      'every',
+      'max',
+      'min',
+      'some'
+    ];
+
     _.each(methods, function(methodName) {
       var array = [1, 2, 3],
           func = _[methodName];
 
-      test('`_.' + methodName + '` should pass the correct `callback` arguments', 1, function() {
+      test('`_.' + methodName + '` should provide the correct `callback` arguments', 1, function() {
         var args,
             expected = [1, 0, array];
 
@@ -3229,7 +4034,7 @@
       });
     });
 
-    _.each(_.difference(methods, boolMethods), function(methodName) {
+    _.each(_.difference(methods, unwrappedMethods), function(methodName) {
       var array = [1, 2, 3],
           func = _[methodName];
 
@@ -3237,6 +4042,21 @@
         if (!isNpm) {
           var actual = _(array)[methodName](_.noop);
           ok(actual instanceof _);
+        }
+        else {
+          skipTest();
+        }
+      });
+    });
+
+    _.each(unwrappedMethods, function(methodName) {
+      var array = [1, 2, 3],
+          func = _[methodName];
+
+      test('`_.' + methodName + '` should return an unwrapped value when chaining', 1, function() {
+        if (!isNpm) {
+          var actual = _(array)[methodName](_.noop);
+          ok(!(actual instanceof _));
         }
         else {
           skipTest();
@@ -3266,10 +4086,10 @@
         strictEqual(func(array, Boolean), array);
       });
 
-      test('`_.' + methodName + '` should return the existing wrapper when chaining', 1, function() {
+      test('`_.' + methodName + '` should return the existing wrapped value when chaining', 1, function() {
         if (!isNpm) {
-          var wrapper = _(array);
-          strictEqual(wrapper[methodName](_.noop), wrapper);
+          var wrapped = _(array);
+          strictEqual(wrapped[methodName](_.noop), wrapped);
         }
         else {
           skipTest();
@@ -3315,16 +4135,16 @@
 
     test('`_.' + methodName + '` does not iterate over non-enumerable properties (test in IE < 9)', 10, function() {
       _.forOwn({
-        'Array': Array.prototype,
+        'Array': arrayProto,
         'Boolean': Boolean.prototype,
         'Date': Date.prototype,
-        'Error': Error.prototype,
-        'Function': Function.prototype,
-        'Object': Object.prototype,
+        'Error': errorProto,
+        'Function': funcProto,
+        'Object': objectProto,
         'Number': Number.prototype,
         'TypeError': TypeError.prototype,
         'RegExp': RegExp.prototype,
-        'String': String.prototype
+        'String': stringProto
       },
       function(proto, key) {
         var message = 'non-enumerable properties on ' + key + '.prototype',
@@ -3371,6 +4191,13 @@
       strictEqual(func(), undefined);
     });
 
+    test('`_.' + methodName + '` should not assign inherited `source` properties', 1, function() {
+      function Foo() {}
+      Foo.prototype = { 'a': 1 };
+
+      deepEqual(func({}, new Foo), {});
+    });
+
     test('`_.' + methodName + '` should assign problem JScript properties (test in IE < 9)', 1, function() {
       var object = {
         'constructor': '0',
@@ -3405,11 +4232,6 @@
       deepEqual(func({}, Foo), expected);
     });
 
-    test('`_.' + methodName + '` should work with `_.reduce`', 1, function() {
-      var array = [{ 'b': 2 }, { 'c': 3 }];
-      deepEqual(_.reduce(array, func, { 'a': 1}), { 'a': 1, 'b': 2, 'c': 3 });
-    });
-
     test('`_.' + methodName + '` should not error on nullish sources (test in IE < 9)', 1, function() {
       try {
         deepEqual(func({ 'a': 1 }, undefined, { 'b': 2 }, null), { 'a': 1, 'b': 2 });
@@ -3432,10 +4254,15 @@
       deepEqual(actual, expected);
     });
 
-    test('`_.' + methodName + '` should return the existing wrapper when chaining', 1, function() {
+    test('`_.' + methodName + '` should work with `_.reduce`', 1, function() {
+      var array = [{ 'b': 2 }, { 'c': 3 }];
+      deepEqual(_.reduce(array, func, { 'a': 1}), { 'a': 1, 'b': 2, 'c': 3 });
+    });
+
+    test('`_.' + methodName + '` should return the existing wrapped value when chaining', 1, function() {
       if (!isNpm) {
-        var wrapper = _({ 'a': 1 });
-        strictEqual(wrapper[methodName]({ 'b': 2 }), wrapper);
+        var wrapped = _({ 'a': 1 });
+        strictEqual(wrapped[methodName]({ 'b': 2 }), wrapped);
       }
       else {
         skipTest();
@@ -3447,7 +4274,7 @@
     var func = _[methodName],
         isMerge = methodName == 'merge';
 
-    test('`_.' + methodName + '` should pass the correct `callback` arguments', 3, function() {
+    test('`_.' + methodName + '` should provide the correct `callback` arguments', 3, function() {
       var args,
           object = { 'a': 1 },
           source = { 'a': 2 };
@@ -3542,7 +4369,7 @@
           stringObject = Object(stringLiteral),
           expected = [stringLiteral, stringObject];
 
-      var largeArray = _.times(largeArraySize, function(count) {
+      var largeArray = _.times(LARGE_ARRAY_SIZE, function(count) {
         return count % 2 ? stringObject : stringLiteral;
       });
 
@@ -3560,7 +4387,7 @@
   (function() {
     test('should return the function names of an object', 1, function() {
       var object = { 'a': 'a', 'b': _.identity, 'c': /x/, 'd': _.each };
-      deepEqual(_.functions(object), ['b', 'd']);
+      deepEqual(_.functions(object).sort(), ['b', 'd']);
     });
 
     test('should include inherited functions', 1, function() {
@@ -3569,7 +4396,7 @@
         this.b = 'b'
       }
       Foo.prototype.c = _.noop;
-      deepEqual(_.functions(new Foo), ['a', 'c']);
+      deepEqual(_.functions(new Foo).sort(), ['a', 'c']);
     });
 
     test('should be aliased', 1, function() {
@@ -3589,7 +4416,7 @@
       deepEqual(actual, { '4': [4], '6':  [6, 6] });
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.groupBy(array, function() {
@@ -3635,7 +4462,7 @@
       deepEqual(_.groupBy(array, 1), { 'a': [[1 , 'a'], [2, 'a']], 'b': [[2, 'b']] });
     });
 
-    test('should work with a string for `callback`', 1, function() {
+    test('should work with a "_.pluck" style `callback`', 1, function() {
       var actual = _.groupBy(['one', 'two', 'three'], 'length');
       deepEqual(actual, { '3': ['one', 'two'], '5': ['three'] });
     });
@@ -3669,7 +4496,7 @@
     });
 
     test('should return `false` for primitives', 1, function() {
-      var values = falsey.concat(1, 'a'),
+      var values = falsey.concat(true, 1, 'a'),
           expected = _.map(values, _.constant(false));
 
       var actual = _.map(values, function(value) {
@@ -3689,7 +4516,7 @@
       var object = { 'name': 'fred' };
       strictEqual(_.identity(object), object);
     });
-  }())
+  }());
 
   /*--------------------------------------------------------------------------*/
 
@@ -3749,25 +4576,23 @@
       strictEqual(_.indexOf(array, 3), 2);
     });
 
-    test('should return `-1` for an unmatched value', 4, function() {
-      strictEqual(_.indexOf(array, 4), -1);
-      strictEqual(_.indexOf(array, 4, true), -1);
-
-      var empty = [];
-      strictEqual(_.indexOf(empty, undefined), -1);
-      strictEqual(_.indexOf(empty, undefined, true), -1);
-    });
-
     test('should work with a positive `fromIndex`', 1, function() {
       strictEqual(_.indexOf(array, 1, 2), 3);
     });
 
-    test('should work with `fromIndex` >= `array.length`', 12, function() {
-      _.each([6, 8, Math.pow(2, 32), Infinity], function(fromIndex) {
-        strictEqual(_.indexOf(array, 1, fromIndex), -1);
-        strictEqual(_.indexOf(array, undefined, fromIndex), -1);
-        strictEqual(_.indexOf(array, '', fromIndex), -1);
+    test('should work with `fromIndex` >= `array.length`', 1, function() {
+      var values = [6, 8, Math.pow(2, 32), Infinity],
+          expected = _.map(values, _.constant([-1, -1, -1]));
+
+      var actual = _.map(values, function(fromIndex) {
+        return [
+          _.indexOf(array, undefined, fromIndex),
+          _.indexOf(array, 1, fromIndex),
+          _.indexOf(array, '', fromIndex)
+        ];
       });
+
+      deepEqual(actual, expected);
     });
 
     test('should treat falsey `fromIndex` values as `0`', 1, function() {
@@ -3780,22 +4605,31 @@
       deepEqual(actual, expected);
     });
 
-    test('should treat non-number `fromIndex` values as `0`', 1, function() {
-      strictEqual(_.indexOf([1, 2, 3], 1, '1'), 0);
+    test('should perform a binary search when `fromIndex` is a non-number truthy value', 1, function() {
+      var sorted = [4, 4, 5, 5, 6, 6],
+          values = [true, '1', {}],
+          expected = _.map(values, _.constant(2));
+
+      var actual = _.map(values, function(value) {
+        return _.indexOf(sorted, 5, value);
+      });
+
+      deepEqual(actual, expected);
     });
 
     test('should work with a negative `fromIndex`', 1, function() {
       strictEqual(_.indexOf(array, 2, -3), 4);
     });
 
-    test('should work with a negative `fromIndex` <= `-array.length`', 3, function() {
-      _.each([-6, -8, -Infinity], function(fromIndex) {
-        strictEqual(_.indexOf(array, 1, fromIndex), 0);
-      });
-    });
+    test('should work with a negative `fromIndex` <= `-array.length`', 1, function() {
+      var values = [-6, -8, -Infinity],
+          expected = _.map(values, _.constant(0));
 
-    test('should work with `isSorted`', 1, function() {
-      strictEqual(_.indexOf([1, 2, 3], 1, true), 0);
+      var actual = _.map(values, function(fromIndex) {
+        return _.indexOf(array, 1, fromIndex);
+      });
+
+      deepEqual(actual, expected);
     });
   }());
 
@@ -3822,7 +4656,7 @@
     var array = [1, new Foo, 3, new Foo],
         indexOf = _.indexOf;
 
-    var largeArray = _.times(largeArraySize, function() {
+    var largeArray = _.times(LARGE_ARRAY_SIZE, function() {
       return new Foo;
     });
 
@@ -3862,15 +4696,19 @@
       }
     });
 
-    test('`_.uniq` should work with a custom `_.indexOf` method', 2, function() {
+    test('`_.uniq` should work with a custom `_.indexOf` method', 6, function() {
       if (!isModularize) {
         _.indexOf = custom;
-        deepEqual(_.uniq(array), array.slice(0, 3));
-        deepEqual(_.uniq(largeArray), [largeArray[0]]);
+
+        _.each([false, true, _.identity], function(param) {
+          deepEqual(_.uniq(array, param), array.slice(0, 3));
+          deepEqual(_.uniq(largeArray, param), [largeArray[0]]);
+        });
+
         _.indexOf = indexOf;
       }
       else {
-        skipTest(2);
+        skipTest(6);
       }
     });
   }());
@@ -3881,12 +4719,6 @@
 
   (function() {
     var array = [1, 2, 3];
-
-    var objects = [
-      { 'a': 0, 'b': 0 },
-      { 'a': 1, 'b': 1 },
-      { 'a': 2, 'b': 2 }
-    ];
 
     test('should accept a falsey `array` argument', 1, function() {
       var expected = _.map(falsey, _.constant([]));
@@ -3904,36 +4736,8 @@
       deepEqual(_.initial(array), [1, 2]);
     });
 
-    test('should exclude the last two elements', 1, function() {
-      deepEqual(_.initial(array, 2), [1]);
-    });
-
     test('should return an empty when querying empty arrays', 1, function() {
       deepEqual(_.initial([]), []);
-    });
-
-    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
-      var expected = _.map(falsey, function(value) {
-        return value == null ? [1, 2] : array;
-      });
-
-      var actual = _.map(falsey, function(n) {
-        return _.initial(array, n);
-      });
-
-      deepEqual(actual, expected);
-    });
-
-    test('should return all elements when `n` < `1`', 3, function() {
-      _.each([0, -1, -Infinity], function(n) {
-        deepEqual(_.initial(array, n), array);
-      });
-    });
-
-    test('should return an empty array when `n` >= `array.length`', 4, function() {
-      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
-        deepEqual(_.initial(array, n), []);
-      });
     });
 
     test('should work when used as a callback for `_.map`', 1, function() {
@@ -3943,38 +4747,15 @@
       deepEqual(actual, [[1, 2], [4, 5], [7, 8]]);
     });
 
-    test('should work with a callback', 1, function() {
-      var actual = _.initial(array, function(num) {
-        return num > 1;
-      });
-
-      deepEqual(actual, [1]);
-    });
-
-    test('should pass the correct `callback` arguments', 1, function() {
-      var args;
-
-      _.initial(array, function() {
-        args = slice.call(arguments);
-      });
-
-      deepEqual(args, [3, 2, array]);
-    });
-
-    test('should support the `thisArg` argument', 1, function() {
-      var actual = _.initial(array, function(num, index) {
-        return this[index] > 1;
-      }, array);
-
-      deepEqual(actual, [1]);
-    });
-
-    test('should work with an object for `callback`', 1, function() {
-      deepEqual(_.initial(objects, { 'b': 2 }), objects.slice(0, 2));
-    });
-
-    test('should work with a string for `callback`', 1, function() {
-      deepEqual(_.initial(objects, 'b'), objects.slice(0, 1));
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).initial();
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [1, 2]);
+      }
+      else {
+        skipTest(2);
+      }
     });
   }());
 
@@ -3998,17 +4779,17 @@
 
     test('should work with large arrays of objects', 1, function() {
       var object = {},
-          largeArray = _.times(largeArraySize, _.constant(object));
+          largeArray = _.times(LARGE_ARRAY_SIZE, _.constant(object));
 
       deepEqual(_.intersection([object], largeArray), [object]);
     });
 
     test('should work with large arrays of objects', 2, function() {
       var object = {},
-          largeArray = _.times(largeArraySize, _.constant(object));
+          largeArray = _.times(LARGE_ARRAY_SIZE, _.constant(object));
 
       deepEqual(_.intersection([object], largeArray), [object]);
-      deepEqual(_.intersection(_.range(largeArraySize), null, [1]), [1]);
+      deepEqual(_.intersection(_.range(LARGE_ARRAY_SIZE), null, [1]), [1]);
     });
 
     test('should ignore values that are not arrays or `arguments` objects', 3, function() {
@@ -4165,6 +4946,8 @@
         return index ? _.isArray(value) : _.isArray();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isArray(args), false);
       strictEqual(_.isArray(true), false);
       strictEqual(_.isArray(new Date), false);
@@ -4174,8 +4957,6 @@
       strictEqual(_.isArray(1), false);
       strictEqual(_.isArray(/x/), false);
       strictEqual(_.isArray('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with arrays from another realm', 1, function() {
@@ -4198,8 +4979,8 @@
     test('should return `true` for booleans', 4, function() {
       strictEqual(_.isBoolean(true), true);
       strictEqual(_.isBoolean(false), true);
-      strictEqual(_.isBoolean(new Boolean(true)), true);
-      strictEqual(_.isBoolean(new Boolean(false)), true);
+      strictEqual(_.isBoolean(Object(true)), true);
+      strictEqual(_.isBoolean(Object(false)), true);
     });
 
     test('should return `false` for non booleans', 10, function() {
@@ -4208,6 +4989,8 @@
       var actual = _.map(falsey, function(value, index) {
         return index ? _.isBoolean(value) : _.isBoolean();
       });
+
+      deepEqual(actual, expected);
 
       strictEqual(_.isBoolean(args), false);
       strictEqual(_.isBoolean([1, 2, 3]), false);
@@ -4218,8 +5001,6 @@
       strictEqual(_.isBoolean(1), false);
       strictEqual(_.isBoolean(/x/), false);
       strictEqual(_.isBoolean('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with booleans from another realm', 1, function() {
@@ -4250,6 +5031,8 @@
         return index ? _.isDate(value) : _.isDate();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isDate(args), false);
       strictEqual(_.isDate([1, 2, 3]), false);
       strictEqual(_.isDate(true), false);
@@ -4259,8 +5042,6 @@
       strictEqual(_.isDate(1), false);
       strictEqual(_.isDate(/x/), false);
       strictEqual(_.isDate('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with dates from another realm', 1, function() {
@@ -4289,7 +5070,7 @@
 
       strictEqual(_.isElement(element), true);
       strictEqual(_.isElement({ 'nodeType': 1 }), false);
-      strictEqual(_.isElement({ 'nodeType': new Number(1) }), false);
+      strictEqual(_.isElement({ 'nodeType': Object(1) }), false);
       strictEqual(_.isElement({ 'nodeType': true }), false);
       strictEqual(_.isElement({ 'nodeType': [1] }), false);
       strictEqual(_.isElement({ 'nodeType': '1' }), false);
@@ -4297,11 +5078,13 @@
     });
 
     test('should use a stronger check in browsers', 2, function() {
-      var expected = !body;
+      var expected = !_.support.dom;
+
       strictEqual(_.isElement(new Element), expected);
 
       if (lodashBizarro) {
-        strictEqual(lodashBizarro.isElement(new Element), !expected);
+        expected = !lodashBizarro.support.dom;
+        strictEqual(lodashBizarro.isElement(new Element), expected);
       }
       else {
         skipTest();
@@ -4315,6 +5098,8 @@
         return index ? _.isElement(value) : _.isElement();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isElement(args), false);
       strictEqual(_.isElement([1, 2, 3]), false);
       strictEqual(_.isElement(true), false);
@@ -4325,8 +5110,6 @@
       strictEqual(_.isElement(1), false);
       strictEqual(_.isElement(/x/), false);
       strictEqual(_.isElement('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with DOM elements from another realm', 1, function() {
@@ -4353,9 +5136,10 @@
         return _.isEmpty(value);
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isEmpty(), true);
       strictEqual(_.isEmpty(/x/), true);
-      deepEqual(actual, expected);
     });
 
     test('should return `false` for non-empty values', 3, function() {
@@ -4374,7 +5158,7 @@
 
     test('should work with jQuery/MooTools DOM query collections', 1, function() {
       function Foo(elements) { push.apply(this, elements); }
-      Foo.prototype = { 'length': 0, 'splice': Array.prototype.splice };
+      Foo.prototype = { 'length': 0, 'splice': arrayProto.splice };
 
       strictEqual(_.isEmpty(new Foo([])), true);
     });
@@ -4386,9 +5170,9 @@
       strictEqual(_.isEmpty(new Foo), true);
     });
 
-    test('should not treat objects with lengths larger than `maxSafeInteger` as array-like', 1, function() {
+    test('should not treat objects with lengths larger than `MAX_SAFE_INTEGER` as array-like', 1, function() {
       function Foo() {}
-      Foo.prototype.length = maxSafeInteger + 1;
+      Foo.prototype.length = MAX_SAFE_INTEGER + 1;
 
       strictEqual(_.isEmpty(new Foo), true);
     });
@@ -4437,12 +5221,12 @@
   (function() {
     test('should perform comparisons between primitive values', 1, function() {
       var pairs = [
-        [1, 1, true], [1, new Number(1), true], [1, '1', false], [1, 2, false],
-        [-0, -0, true], [0, 0, true], [0, new Number(0), true], [new Number(0), new Number(0), true], [-0, 0, false], [0, '0', false], [0, null, false],
-        [NaN, NaN, true], [NaN, new Number(NaN), true], [new Number(NaN), new Number(NaN), true], [NaN, 'a', false], [NaN, Infinity, false],
-        ['a', 'a', true], ['a', new String('a'), true], [new String('a'), new String('a'), true], ['a', 'b', false], ['a', ['a'], false],
-        [true, true, true], [true, new Boolean(true), true], [new Boolean(true), new Boolean(true), true], [true, 1, false], [true, 'a', false],
-        [false, false, true], [false, new Boolean(false), true], [new Boolean(false), new Boolean(false), true], [false, 0, false], [false, '', false],
+        [1, 1, true], [1, Object(1), true], [1, '1', false], [1, 2, false],
+        [-0, -0, true], [0, 0, true], [0, Object(0), true], [Object(0), Object(0), true], [-0, 0, false], [0, '0', false], [0, null, false],
+        [NaN, NaN, true], [NaN, Object(NaN), true], [Object(NaN), Object(NaN), true], [NaN, 'a', false], [NaN, Infinity, false],
+        ['a', 'a', true], ['a', Object('a'), true], [Object('a'), Object('a'), true], ['a', 'b', false], ['a', ['a'], false],
+        [true, true, true], [true, Object(true), true], [Object(true), Object(true), true], [true, 1, false], [true, 'a', false],
+        [false, false, true], [false, Object(false), true], [Object(false), Object(false), true], [false, 0, false], [false, '', false],
         [null, null, true], [null, undefined, false], [null, {}, false], [null, '', false],
         [undefined, undefined, true], [undefined, null, false], [undefined, '', false]
       ];
@@ -4453,20 +5237,6 @@
 
       var actual = _.map(pairs, function(pair) {
         return _.isEqual(pair[0], pair[1]);
-      })
-
-      deepEqual(actual, expected);
-    });
-
-    test('should return `false` for objects with custom `toString` methods', 1, function() {
-      var primitive,
-          object = { 'toString': function() { return primitive; } },
-          values = [true, null, 1, 'a', undefined],
-          expected = _.map(values, _.constant(false));
-
-      var actual = _.map(values, function(value) {
-        primitive = value;
-        return _.isEqual(object, value);
       });
 
       deepEqual(actual, expected);
@@ -4492,8 +5262,8 @@
 
       strictEqual(_.isEqual(array1, array2), true);
 
-      array1 = [new Number(1), false, new String('a'), /x/, new Date(2012, 4, 23), ['a', 'b', [new String('c')]], { 'a': 1 }];
-      array2 = [1, new Boolean(false), 'a', /x/, new Date(2012, 4, 23), ['a', new String('b'), ['c']], { 'a': 1 }];
+      array1 = [Object(1), false, Object('a'), /x/, new Date(2012, 4, 23), ['a', 'b', [Object('c')]], { 'a': 1 }];
+      array2 = [1, Object(false), 'a', /x/, new Date(2012, 4, 23), ['a', Object('b'), ['c']], { 'a': 1 }];
 
       strictEqual(_.isEqual(array1, array2), true);
 
@@ -4531,19 +5301,12 @@
       strictEqual(_.isEqual(array1, array2), true);
     });
 
-    test('should perform comparisons between date objects', 4, function() {
-      strictEqual(_.isEqual(new Date(2012, 4, 23), new Date(2012, 4, 23)), true);
-      strictEqual(_.isEqual(new Date(2012, 4, 23), new Date(2013, 3, 25)), false);
-      strictEqual(_.isEqual(new Date(2012, 4, 23), { 'getTime': function() { return 1337756400000; } }), false);
-      strictEqual(_.isEqual(new Date('a'), new Date('a')), false);
-    });
+    test('should work with sparse arrays', 3, function() {
+      var array = Array(1);
 
-    test('should perform comparisons between functions', 2, function() {
-      function a() { return 1 + 2; }
-      function b() { return 1 + 2; }
-
-      strictEqual(_.isEqual(a, a), true);
-      strictEqual(_.isEqual(a, b), false);
+      strictEqual(_.isEqual(array, Array(1)), true);
+      strictEqual(_.isEqual(array, [undefined]), true);
+      strictEqual(_.isEqual(array, Array(2)), false);
     });
 
     test('should perform comparisons between plain objects', 5, function() {
@@ -4577,11 +5340,11 @@
       var object1 = {
         'a': [1, 2, 3],
         'b': true,
-        'c': new Number(1),
+        'c': Object(1),
         'd': 'a',
         'e': {
-          'f': ['a', new String('b'), 'c'],
-          'g': new Boolean(false),
+          'f': ['a', Object('b'), 'c'],
+          'g': Object(false),
           'h': new Date(2012, 4, 23),
           'i': _.noop,
           'j': 'a'
@@ -4589,10 +5352,10 @@
       };
 
       var object2 = {
-        'a': [1, new Number(2), 3],
-        'b': new Boolean(true),
+        'a': [1, Object(2), 3],
+        'b': Object(true),
         'c': 1,
-        'd': new String('a'),
+        'd': Object('a'),
         'e': {
           'f': ['a', 'b', 'c'],
           'g': false,
@@ -4618,67 +5381,6 @@
       strictEqual(_.isEqual(new Foo, new Bar), false);
       strictEqual(_.isEqual({ 'value': 1 }, new Foo), false);
       strictEqual(_.isEqual({ 'value': 2 }, new Bar), false);
-    });
-
-    test('should perform comparisons between regexes', 5, function() {
-      strictEqual(_.isEqual(/x/gim, /x/gim), true);
-      strictEqual(_.isEqual(/x/gim, /x/mgi), true);
-      strictEqual(_.isEqual(/x/gi, /x/g), false);
-      strictEqual(_.isEqual(/x/, /y/), false);
-      strictEqual(_.isEqual(/x/g, { 'global': true, 'ignoreCase': false, 'multiline': false, 'source': 'x' }), false);
-    });
-
-    test('should avoid common type coercions', 9, function() {
-      strictEqual(_.isEqual(true, new Boolean(false)), false);
-      strictEqual(_.isEqual(new Boolean(false), new Number(0)), false);
-      strictEqual(_.isEqual(false, new String('')), false);
-      strictEqual(_.isEqual(new Number(36), new String(36)), false);
-      strictEqual(_.isEqual(0, ''), false);
-      strictEqual(_.isEqual(1, true), false);
-      strictEqual(_.isEqual(1337756400000, new Date(2012, 4, 23)), false);
-      strictEqual(_.isEqual('36', 36), false);
-      strictEqual(_.isEqual(36, '36'), false);
-    });
-
-    test('should work with sparse arrays', 2, function() {
-      strictEqual(_.isEqual(Array(3), Array(3)), true);
-      strictEqual(_.isEqual(Array(3), Array(6)), false);
-    });
-
-    test('should work with `arguments` objects (test in IE < 9)', 2, function() {
-      var args1 = (function() { return arguments; }(1, 2, 3)),
-          args2 = (function() { return arguments; }(1, 2, 3)),
-          args3 = (function() { return arguments; }(1, 2));
-
-      strictEqual(_.isEqual(args1, args2), true);
-
-      if (!isPhantom) {
-        strictEqual(_.isEqual(args1, args3), false);
-      }
-      else {
-        skipTest();
-      }
-    });
-
-    test('should treat `arguments` objects like `Object` objects', 2, function() {
-      var args = (function() { return arguments; }(1, 2, 3)),
-          object = { '0': 1, '1': 2, '2': 3, 'length': 3 };
-
-      function Foo() {}
-      Foo.prototype = object;
-
-      strictEqual(_.isEqual(args, object), true);
-
-      if (!isPhantom) {
-        strictEqual(_.isEqual(args, new Foo), false);
-      }
-      else {
-        skipTest();
-      }
-    });
-
-    test('fixes the JScript `[[DontEnum]]` bug (test in IE < 9)', 1, function() {
-      strictEqual(_.isEqual(shadowedObject, {}), false);
     });
 
     test('should perform comparisons between objects with constructor properties', 5, function() {
@@ -4725,12 +5427,12 @@
       strictEqual(_.isEqual(object1, object2), true);
 
       object1.b = 0;
-      object2.b = new Number(0);
+      object2.b = Object(0);
 
       strictEqual(_.isEqual(object1, object2), true);
 
-      object1.c = new Number(1);
-      object2.c = new Number(2);
+      object1.c = Object(1);
+      object2.c = Object(2);
 
       strictEqual(_.isEqual(object1, object2), false);
 
@@ -4751,12 +5453,12 @@
       strictEqual(_.isEqual(array1, array2), true);
 
       array1[0].b = 0;
-      array2[0].b = new Number(0);
+      array2[0].b = Object(0);
 
       strictEqual(_.isEqual(array1, array2), true);
 
-      array1[0].c = new Number(1);
-      array2[0].c = new Number(2);
+      array1[0].c = Object(1);
+      array2[0].c = Object(2);
 
       strictEqual(_.isEqual(array1, array2), false);
     });
@@ -4796,7 +5498,141 @@
       strictEqual(_.isEqual(object1, object2), true);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should work with `arguments` objects (test in IE < 9)', 2, function() {
+      var args1 = (function() { return arguments; }(1, 2, 3)),
+          args2 = (function() { return arguments; }(1, 2, 3)),
+          args3 = (function() { return arguments; }(1, 2));
+
+      strictEqual(_.isEqual(args1, args2), true);
+
+      if (!isPhantom) {
+        strictEqual(_.isEqual(args1, args3), false);
+      }
+      else {
+        skipTest();
+      }
+    });
+
+    test('should treat `arguments` objects like `Object` objects', 4, function() {
+      var args = (function() { return arguments; }(1, 2, 3)),
+          object = { '0': 1, '1': 2, '2': 3, 'length': 3 };
+
+      function Foo() {}
+      Foo.prototype = object;
+
+      strictEqual(_.isEqual(args, object), true);
+      strictEqual(_.isEqual(object, args), true);
+
+      if (!isPhantom) {
+        strictEqual(_.isEqual(args, new Foo), false);
+        strictEqual(_.isEqual(new Foo, args), false);
+      }
+      else {
+        skipTest(2);
+      }
+    });
+
+    test('should perform comparisons between date objects', 4, function() {
+      strictEqual(_.isEqual(new Date(2012, 4, 23), new Date(2012, 4, 23)), true);
+      strictEqual(_.isEqual(new Date(2012, 4, 23), new Date(2013, 3, 25)), false);
+      strictEqual(_.isEqual(new Date(2012, 4, 23), { 'getTime': function() { return 1337756400000; } }), false);
+      strictEqual(_.isEqual(new Date('a'), new Date('a')), false);
+    });
+
+    test('should perform comparisons between error objects', 1, function() {
+      var pairs = _.map([
+        'Error',
+        'EvalError',
+        'RangeError',
+        'ReferenceError',
+        'SyntaxError',
+        'TypeError',
+        'URIError'
+      ], function(type, index, errorTypes) {
+        var otherType = errorTypes[++index % errorTypes.length],
+            CtorA = root[type],
+            CtorB = root[otherType];
+
+        return [new CtorA('a'), new CtorA('a'), new CtorB('a'), new CtorB('b')];
+      });
+
+      var expected = _.times(pairs.length, _.constant([true, false, false]));
+
+      var actual = _.map(pairs, function(pair) {
+        return [_.isEqual(pair[0], pair[1]), _.isEqual(pair[0], pair[2]), _.isEqual(pair[2], pair[3])];
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should perform comparisons between functions', 2, function() {
+      function a() { return 1 + 2; }
+      function b() { return 1 + 2; }
+
+      strictEqual(_.isEqual(a, a), true);
+      strictEqual(_.isEqual(a, b), false);
+    });
+
+    test('should perform comparisons between regexes', 5, function() {
+      strictEqual(_.isEqual(/x/gim, /x/gim), true);
+      strictEqual(_.isEqual(/x/gim, /x/mgi), true);
+      strictEqual(_.isEqual(/x/gi, /x/g), false);
+      strictEqual(_.isEqual(/x/, /y/), false);
+      strictEqual(_.isEqual(/x/g, { 'global': true, 'ignoreCase': false, 'multiline': false, 'source': 'x' }), false);
+    });
+
+    test('should perform comparisons between typed arrays', 1, function() {
+      var pairs = _.map(typedArrays, function(type, index) {
+        var otherType = typedArrays[++index % typedArrays.length],
+            CtorA = root[type] || function(n) { this.n = n; },
+            CtorB = root[otherType] || function(n) { this.n = n; },
+            bufferA = root[type] ? new ArrayBuffer(8) : 8,
+            bufferB = root[otherType] ? new ArrayBuffer(8) : 8,
+            bufferC = root[otherType] ? new ArrayBuffer(16) : 16;
+
+        return [new CtorA(bufferA), new CtorA(bufferA), new CtorB(bufferB), new CtorB(bufferC)];
+      });
+
+      var expected = _.times(pairs.length, _.constant([true, false, false]));
+
+      var actual = _.map(pairs, function(pair) {
+        return [_.isEqual(pair[0], pair[1]), _.isEqual(pair[0], pair[2]), _.isEqual(pair[2], pair[3])];
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should avoid common type coercions', 9, function() {
+      strictEqual(_.isEqual(true, Object(false)), false);
+      strictEqual(_.isEqual(Object(false), Object(0)), false);
+      strictEqual(_.isEqual(false, Object('')), false);
+      strictEqual(_.isEqual(Object(36), Object('36')), false);
+      strictEqual(_.isEqual(0, ''), false);
+      strictEqual(_.isEqual(1, true), false);
+      strictEqual(_.isEqual(1337756400000, new Date(2012, 4, 23)), false);
+      strictEqual(_.isEqual('36', 36), false);
+      strictEqual(_.isEqual(36, '36'), false);
+    });
+
+    test('fixes the JScript `[[DontEnum]]` bug (test in IE < 9)', 1, function() {
+      strictEqual(_.isEqual(shadowedObject, {}), false);
+    });
+
+    test('should return `false` for objects with custom `toString` methods', 1, function() {
+      var primitive,
+          object = { 'toString': function() { return primitive; } },
+          values = [true, null, 1, 'a', undefined],
+          expected = _.map(values, _.constant(false));
+
+      var actual = _.map(values, function(value) {
+        primitive = value;
+        return _.isEqual(object, value);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should provide the correct `callback` arguments', 1, function() {
       var argsList = [];
 
       var object1 = {
@@ -4840,7 +5676,7 @@
     });
 
     test('should handle comparisons if `callback` returns `undefined`', 1, function() {
-      var actual = _.isEqual('a', 'a', function() {});
+      var actual = _.isEqual('a', 'a', _.noop);
       strictEqual(actual, true);
     });
 
@@ -4888,21 +5724,31 @@
       }
     });
 
-    test('should perform comparisons between typed arrays', 1, function() {
-      var pairs = _.map(typedArrays, function(type) {
-        var Ctor = root[type] || Array,
-            buffer = Ctor == Array ? 4 : new ArrayBuffer(4);
+    test('should return `true` for like-objects from different documents', 1, function() {
+      // ensure `_._object` is assigned (unassigned in Opera 10.00)
+      if (_._object) {
+        var object = { 'a': 1, 'b': 2, 'c': 3 };
+        strictEqual(_.isEqual(object, _._object), true);
+      }
+      else {
+        skipTest();
+      }
+    });
 
-        return [new Ctor(buffer), new Ctor(buffer)];
-      });
+    test('should not error on DOM elements', 1, function() {
+      if (document) {
+        var element1 = document.createElement('div'),
+            element2 = element1.cloneNode(true);
 
-      var expected = _.times(pairs.length, _.constant(true));
-
-      var actual = _.map(pairs, function(pair) {
-        return _.isEqual(pair[0], pair[1]);
-      });
-
-      deepEqual(actual, expected);
+        try {
+          strictEqual(_.isEqual(element1, element2), false);
+        } catch(e) {
+          ok(false);
+        }
+      }
+      else {
+        skipTest();
+      }
     });
 
     test('should perform comparisons between wrapped values', 4, function() {
@@ -4945,33 +5791,6 @@
       }
     });
 
-    test('should return `true` for like-objects from different documents', 1, function() {
-      // ensure `_._object` is assigned (unassigned in Opera 10.00)
-      if (_._object) {
-        var object = { 'a': 1, 'b': 2, 'c': 3 };
-        strictEqual(_.isEqual(object, _._object), true);
-      }
-      else {
-        skipTest();
-      }
-    });
-
-    test('should not error on DOM elements', 1, function() {
-      if (document) {
-        var element1 = document.createElement('div'),
-            element2 = element1.cloneNode(true);
-
-        try {
-          strictEqual(_.isEqual(element1, element2), false);
-        } catch(e) {
-          ok(false);
-        }
-      }
-      else {
-        skipTest();
-      }
-    });
-
     test('should return an unwrapped value when intuitively chaining', 1, function() {
       if (!isNpm) {
         strictEqual(_('a').isEqual('a'), true);
@@ -4999,8 +5818,7 @@
     var args = arguments;
 
     test('should return `true` for error objects', 1, function() {
-      var errors = [new Error, new EvalError, new RangeError, new ReferenceError, new SyntaxError, new TypeError, new URIError],
-          expected = _.map(errors, _.constant(true));
+      var expected = _.map(errors, _.constant(true));
 
       var actual = _.map(errors, function(error) {
         return _.isError(error) === true;
@@ -5016,6 +5834,8 @@
         return index ? _.isError(value) : _.isError();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isError(args), false);
       strictEqual(_.isError([1, 2, 3]), false);
       strictEqual(_.isError(true), false);
@@ -5025,8 +5845,6 @@
       strictEqual(_.isError(1), false);
       strictEqual(_.isError(/x/), false);
       strictEqual(_.isError('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with an error object from another realm', 1, function() {
@@ -5050,45 +5868,48 @@
   QUnit.module('lodash.isFinite');
 
   (function() {
-    test('should return `true` for finite values', 5, function() {
-      strictEqual(_.isFinite(0), true);
-      strictEqual(_.isFinite(1), true);
-      strictEqual(_.isFinite(3.14), true);
-      strictEqual(_.isFinite(-1), true);
-      strictEqual(_.isFinite(new Number(0)), true);
+    test('should return `true` for finite values', 1, function() {
+      var values = [0, 1, 3.14, -1],
+          expected = _.map(values, _.constant(true));
+
+      var actual = _.map(values, function(value) {
+        return _.isFinite(value);
+      });
+
+      deepEqual(actual, expected);
     });
 
-    test('should return `false` for non-finite values', 3, function() {
-      strictEqual(_.isFinite(NaN), false);
-      strictEqual(_.isFinite(Infinity), false);
-      strictEqual(_.isFinite(-Infinity), false);
+    test('should return `false` for non-finite values', 1, function() {
+      var values = [NaN, Infinity, -Infinity, Object(1)],
+          expected = _.map(values, _.constant(false));
+
+      var actual = _.map(values, function(value) {
+        return _.isFinite(value);
+      });
+
+      deepEqual(actual, expected);
     });
 
-    test('should return `false` for non-numeric values', 9, function() {
-      strictEqual(_.isFinite(null), false);
-      strictEqual(_.isFinite(undefined), false);
-      strictEqual(_.isFinite([]), false);
-      strictEqual(_.isFinite(true), false);
-      strictEqual(_.isFinite(new Date), false);
-      strictEqual(_.isFinite(new Error), false);
-      strictEqual(_.isFinite(''), false);
-      strictEqual(_.isFinite(' '), false);
-      strictEqual(_.isFinite('2px'), false);
+    test('should return `false` for non-numeric values', 1, function() {
+      var values = [undefined, [], true, new Date, new Error, '', ' ', '2px'],
+          expected = _.map(values, _.constant(false));
+
+      var actual = _.map(values, function(value) {
+        return _.isFinite(value);
+      });
+
+      deepEqual(actual, expected);
     });
 
-    test('should return `true` for numeric string values', 3, function() {
-      strictEqual(_.isFinite('2'), true);
-      strictEqual(_.isFinite('0'), true);
-      strictEqual(_.isFinite('08'), true);
-    });
+    test('should return `false` for numeric string values', 1, function() {
+      var values = ['2', '0', '08'],
+          expected = _.map(values, _.constant(false));
 
-    test('should work with numbers from another realm', 1, function() {
-      if (_._object) {
-        strictEqual(_.isFinite(_._number), true);
-      }
-      else {
-        skipTest();
-      }
+      var actual = _.map(values, function(value) {
+        return _.isFinite(value);
+      });
+
+      deepEqual(actual, expected);
     });
   }());
 
@@ -5110,6 +5931,8 @@
         return index ? _.isFunction(value) : _.isFunction();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isFunction(args), false);
       strictEqual(_.isFunction([1, 2, 3]), false);
       strictEqual(_.isFunction(true), false);
@@ -5119,8 +5942,6 @@
       strictEqual(_.isFunction(1), false);
       strictEqual(_.isFunction(/x/), false);
       strictEqual(_.isFunction('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with host objects in non-edge document modes (test in IE 11)', 1, function() {
@@ -5155,7 +5976,7 @@
 
     test('should return `true` for NaNs', 2, function() {
       strictEqual(_.isNaN(NaN), true);
-      strictEqual(_.isNaN(new Number(NaN)), true);
+      strictEqual(_.isNaN(Object(NaN)), true);
     });
 
     test('should return `false` for non NaNs', 11, function() {
@@ -5164,6 +5985,8 @@
       var actual = _.map(falsey, function(value, index) {
         return index ? _.isNaN(value) : _.isNaN();
       });
+
+      deepEqual(actual, expected);
 
       strictEqual(_.isNaN(args), false);
       strictEqual(_.isNaN([1, 2, 3]), false);
@@ -5175,8 +5998,6 @@
       strictEqual(_.isNaN(1), false);
       strictEqual(_.isNaN(/x/), false);
       strictEqual(_.isNaN('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with NaNs from another realm', 1, function() {
@@ -5207,6 +6028,8 @@
         return index ? _.isNull(value) : _.isNull();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isNull(args), false);
       strictEqual(_.isNull([1, 2, 3]), false);
       strictEqual(_.isNull(true), false);
@@ -5217,8 +6040,6 @@
       strictEqual(_.isNull(1), false);
       strictEqual(_.isNull(/x/), false);
       strictEqual(_.isNull('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with nulls from another realm', 1, function() {
@@ -5240,7 +6061,7 @@
 
     test('should return `true` for numbers', 2, function() {
       strictEqual(_.isNumber(0), true);
-      strictEqual(_.isNumber(new Number(0)), true);
+      strictEqual(_.isNumber(Object(0)), true);
     });
 
     test('should return `false` for non numbers', 10, function() {
@@ -5249,6 +6070,8 @@
       var actual = _.map(falsey, function(value, index) {
         return index ? _.isNumber(value) : _.isNumber();
       });
+
+      deepEqual(actual, expected);
 
       strictEqual(_.isNumber(args), false);
       strictEqual(_.isNumber([1, 2, 3]), false);
@@ -5259,8 +6082,6 @@
       strictEqual(_.isNumber({ 'a': 1 }), false);
       strictEqual(_.isNumber(/x/), false);
       strictEqual(_.isNumber('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with numbers from another realm', 1, function() {
@@ -5287,14 +6108,14 @@
     test('should return `true` for objects', 11, function() {
       strictEqual(_.isObject(args), true);
       strictEqual(_.isObject([1, 2, 3]), true);
-      strictEqual(_.isObject(new Boolean(false)), true);
+      strictEqual(_.isObject(Object(false)), true);
       strictEqual(_.isObject(new Date), true);
       strictEqual(_.isObject(new Error), true);
       strictEqual(_.isObject(_), true);
       strictEqual(_.isObject({ 'a': 1 }), true);
-      strictEqual(_.isObject(new Number(0)), true);
+      strictEqual(_.isObject(Object(0)), true);
       strictEqual(_.isObject(/x/), true);
-      strictEqual(_.isObject(new String('a')), true);
+      strictEqual(_.isObject(Object('a')), true);
 
       if (document) {
         strictEqual(_.isObject(body), true);
@@ -5304,7 +6125,7 @@
     });
 
     test('should return `false` for non objects', 1, function() {
-      var values = falsey.concat('a', true),
+      var values = falsey.concat(true, 1, 'a'),
           expected = _.map(values, _.constant(false));
 
       var actual = _.map(values, function(value, index) {
@@ -5364,7 +6185,6 @@
       strictEqual(_.isPlainObject({}), true);
       strictEqual(_.isPlainObject({ 'a': 1 }), true);
       strictEqual(_.isPlainObject({ 'constructor': Foo }), true);
-
       strictEqual(_.isPlainObject([1, 2, 3]), false);
       strictEqual(_.isPlainObject(new Foo(1)), false);
     });
@@ -5383,6 +6203,7 @@
       if (element) {
         var valueOf = element.valueOf;
         element.valueOf = 0;
+
         strictEqual(_.isPlainObject(element), false);
         element.valueOf = valueOf;
       }
@@ -5412,9 +6233,10 @@
         return index ? _.isPlainObject(value) : _.isPlainObject();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isPlainObject(true), false);
       strictEqual(_.isPlainObject('a'), false);
-      deepEqual(actual, expected);
     });
 
     test('should work with objects from another realm', 1, function() {
@@ -5446,6 +6268,8 @@
         return index ? _.isRegExp(value) : _.isRegExp();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isRegExp(args), false);
       strictEqual(_.isRegExp([1, 2, 3]), false);
       strictEqual(_.isRegExp(true), false);
@@ -5455,8 +6279,6 @@
       strictEqual(_.isRegExp({ 'a': 1 }), false);
       strictEqual(_.isRegExp(1), false);
       strictEqual(_.isRegExp('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with regexes from another realm', 1, function() {
@@ -5478,7 +6300,7 @@
 
     test('should return `true` for strings', 2, function() {
       strictEqual(_.isString('a'), true);
-      strictEqual(_.isString(new String('a')), true);
+      strictEqual(_.isString(Object('a')), true);
     });
 
     test('should return `false` for non strings', 10, function() {
@@ -5487,6 +6309,8 @@
       var actual = _.map(falsey, function(value, index) {
         return index ? _.isString(value) : _.isString();
       });
+
+      deepEqual(actual, expected);
 
       strictEqual(_.isString(args), false);
       strictEqual(_.isString([1, 2, 3]), false);
@@ -5497,8 +6321,6 @@
       strictEqual(_.isString({ '0': 1, 'length': 1 }), false);
       strictEqual(_.isString(1), false);
       strictEqual(_.isString(/x/), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with strings from another realm', 1, function() {
@@ -5530,6 +6352,8 @@
         return index ? _.isUndefined(value) : _.isUndefined();
       });
 
+      deepEqual(actual, expected);
+
       strictEqual(_.isUndefined(args), false);
       strictEqual(_.isUndefined([1, 2, 3]), false);
       strictEqual(_.isUndefined(true), false);
@@ -5540,8 +6364,6 @@
       strictEqual(_.isUndefined(1), false);
       strictEqual(_.isUndefined(/x/), false);
       strictEqual(_.isUndefined('a'), false);
-
-      deepEqual(actual, expected);
     });
 
     test('should work with `undefined` from another realm', 1, function() {
@@ -5578,11 +6400,12 @@
       });
     });
 
-    test('should not error on host objects (test in IE)', 12, function() {
+    test('should not error on host objects (test in IE)', 15, function() {
       if (xml) {
         var funcs = [
-          'isArray', 'isArguments', 'isBoolean', 'isDate', 'isElement', 'isFunction',
-          'isObject', 'isNull', 'isNumber', 'isRegExp', 'isString', 'isUndefined'
+          'isArguments', 'isArray', 'isBoolean', 'isDate', 'isElement',
+          'isError', 'isFinite', 'isFunction', 'isNaN', 'isNull', 'isNumber',
+          'isObject', 'isRegExp', 'isString', 'isUndefined'
         ];
 
         _.each(funcs, function(methodName) {
@@ -5596,7 +6419,7 @@
         });
       }
       else {
-        skipTest(12)
+        skipTest(15);
       }
     });
   }());
@@ -5611,96 +6434,107 @@
         isKeys = methodName == 'keys';
 
     test('`_.' + methodName + '` should return the keys of an object', 1, function() {
-      var object = { 'a': 1, 'b': 1 },
-          actual = func(object);
+      deepEqual(func({ 'a': 1, 'b': 1 }).sort(), ['a', 'b']);
+    });
 
-      deepEqual(actual.sort(), ['a', 'b']);
+    test('`_.' + methodName + '` should coerce primitives to objects (test in IE 9)', 2, function() {
+      deepEqual(func('abc').sort(), ['0', '1', '2']);
+
+      if (!isKeys) {
+        // IE 9 doesn't box numbers in for-in loops
+        Number.prototype.a = 1;
+        deepEqual(func(0).sort(), ['a']);
+        delete Number.prototype.a;
+      }
+      else {
+        skipTest();
+      }
     });
 
     test('`_.' + methodName + '` should treat sparse arrays as dense', 1, function() {
       var array = [1];
       array[2] = 3;
 
-      var actual = func(array);
-      deepEqual(actual.sort(), ['0', '1', '2']);
+      deepEqual(func(array).sort(), ['0', '1', '2']);
     });
 
-    test('`_.' + methodName + '` should custom properties on arrays', 1, function() {
+    test('`_.' + methodName + '` should return an empty array for `null` or `undefined` values', 2, function() {
+      objectProto.a = 1;
+      _.each([null, undefined], function(value) {
+        deepEqual(func(value), []);
+      });
+      delete objectProto.a;
+    });
+
+    test('`_.' + methodName + '` should return keys for custom properties on arrays', 1, function() {
       var array = [1];
       array.a = 1;
 
-      var actual = func(array);
-      deepEqual(actual.sort(), ['0', 'a']);
+      deepEqual(func(array).sort(), ['0', 'a']);
     });
 
     test('`_.' + methodName + '` should ' + (isKeys ? 'not' : '') + ' include inherited properties of arrays', 1, function() {
-      Array.prototype.a = 1;
-      var expected = isKeys ? ['0'] : ['0', 'a'],
-          actual = func([1]);
+      var expected = isKeys ? ['0'] : ['0', 'a'];
 
-      deepEqual(actual.sort(), expected);
-      delete Array.prototype.a;
+      arrayProto.a = 1;
+      deepEqual(func([1]).sort(), expected);
+      delete arrayProto.a;
     });
 
     test('`_.' + methodName + '` should work with `arguments` objects (test in IE < 9)', 1, function() {
-      if (!isPhantom) {
-        var actual = func(args);
-        deepEqual(actual.sort(), ['0', '1', '2']);
-      } else {
+      if (!(isPhantom || isStrict)) {
+        deepEqual(func(args).sort(), ['0', '1', '2']);
+      }
+      else {
         skipTest();
       }
     });
 
-    test('`_.' + methodName + '` should custom properties on `arguments` objects', 1, function() {
-      if (!isPhantom) {
+    test('`_.' + methodName + '` should return keys for custom properties on `arguments` objects', 1, function() {
+      if (!(isPhantom || isStrict)) {
         args.a = 1;
-        var actual = func(args);
-
-        deepEqual(actual.sort(), ['0', '1', '2', 'a']);
+        deepEqual(func(args).sort(), ['0', '1', '2', 'a']);
         delete args.a;
-      } else {
+      }
+      else {
         skipTest();
       }
     });
 
     test('`_.' + methodName + '` should ' + (isKeys ? 'not' : '') + ' include inherited properties of `arguments` objects', 1, function() {
-      if (!isPhantom) {
-        Object.prototype.a = 1;
-        var expected = isKeys ? ['0', '1', '2'] : ['0', '1', '2', 'a'],
-            actual = func(args);
+      if (!(isPhantom || isStrict)) {
+        var expected = isKeys ? ['0', '1', '2'] : ['0', '1', '2', 'a'];
 
-        deepEqual(actual.sort(), expected);
-        delete Object.prototype.a;
-      } else {
+        objectProto.a = 1;
+        deepEqual(func(args).sort(), expected);
+        delete objectProto.a;
+      }
+      else {
         skipTest();
       }
     });
 
     test('`_.' + methodName + '` should work with string objects (test in IE < 9)', 1, function() {
-      var actual = func(Object('abc'));
-      deepEqual(actual.sort(), ['0', '1', '2']);
+      deepEqual(func(Object('abc')).sort(), ['0', '1', '2']);
     });
 
-    test('`_.' + methodName + '` should custom properties on string objects', 1, function() {
+    test('`_.' + methodName + '` should return keys for custom properties on string objects', 1, function() {
       var object = Object('a');
       object.a = 1;
 
-      var actual = func(object);
-      deepEqual(actual.sort(), ['0', 'a']);
+      deepEqual(func(object).sort(), ['0', 'a']);
     });
 
     test('`_.' + methodName + '` should ' + (isKeys ? 'not' : '') + ' include inherited properties of string objects', 1, function() {
-      String.prototype.a = 1;
-      var expected = isKeys ? ['0'] : ['0', 'a'],
-          actual = func(Object('a'));
+      var expected = isKeys ? ['0'] : ['0', 'a'];
 
-      deepEqual(actual.sort(), expected);
-      delete String.prototype.a;
+      stringProto.a = 1;
+      deepEqual(func(Object('a')).sort(), expected);
+      delete stringProto.a;
     });
 
     test('`_.' + methodName + '` fixes the JScript `[[DontEnum]]` bug (test in IE < 9)', 1, function() {
-      var actual = func(shadowedObject);
-      deepEqual(actual.sort(), shadowedProps);
+      deepEqual(func(shadowedObject).sort(), shadowedProps);
     });
 
     test('`_.' + methodName + '` skips the prototype property of functions (test in Firefox < 3.6, Opera > 9.50 - Opera < 11.60, and Safari < 5.1)', 2, function() {
@@ -5709,14 +6543,11 @@
       Foo.b = 2;
       Foo.prototype.c = 3;
 
-      var expected = ['a', 'b'],
-          actual = func(Foo);
-
-      deepEqual(actual.sort(), expected);
+      var expected = ['a', 'b'];
+      deepEqual(func(Foo).sort(), expected);
 
       Foo.prototype = { 'c': 3 };
-      actual = func(Foo);
-      deepEqual(actual.sort(), expected);
+      deepEqual(func(Foo).sort(), expected);
     });
 
     test('`_.' + methodName + '` skips the `constructor` property on prototype objects', 2, function() {
@@ -5737,10 +6568,8 @@
       }
       Foo.prototype.c = 3;
 
-      var expected = isKeys ? ['a', 'b'] : ['a', 'b', 'c'],
-          actual = func(new Foo);
-
-      deepEqual(actual.sort(), expected);
+      var expected = isKeys ? ['a', 'b'] : ['a', 'b', 'c'];
+      deepEqual(func(new Foo).sort(), expected);
     });
   });
 
@@ -5751,45 +6580,13 @@
   (function() {
     var array = [1, 2, 3];
 
-    var objects = [
-      { 'a': 0, 'b': 0 },
-      { 'a': 1, 'b': 1 },
-      { 'a': 2, 'b': 2 }
-    ];
-
     test('should return the last element', 1, function() {
       strictEqual(_.last(array), 3);
     });
 
-    test('should return the last two elements', 1, function() {
-      deepEqual(_.last(array, 2), [2, 3]);
-    });
-
-    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
-      var expected = _.map(falsey, function(value) {
-        return value == null ? 3 : [];
-      });
-
-      var actual = _.map(falsey, function(n) {
-        return _.last(array, n);
-      });
-
-      deepEqual(actual, expected);
-    });
-
-    test('should return an empty array when `n` < `1`', 3, function() {
-      _.each([0, -1, -Infinity], function(n) {
-        deepEqual(_.last(array, n), []);
-      });
-    });
-
-    test('should return all elements when `n` >= `array.length`', 4, function() {
-      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
-        deepEqual(_.last(array, n), array);
-      });
-    });
-
     test('should return `undefined` when querying empty arrays', 1, function() {
+      var array = []
+      array['-1'] = 1;
       strictEqual(_.last([]), undefined);
     });
 
@@ -5800,67 +6597,9 @@
       deepEqual(actual, [3, 6, 9]);
     });
 
-    test('should work with a callback', 1, function() {
-      var actual = _.last(array, function(num) {
-        return num > 1;
-      });
-
-      deepEqual(actual, [2, 3]);
-    });
-
-    test('should pass the correct `callback` arguments', 1, function() {
-      var args;
-
-      _.last(array, function() {
-        args = slice.call(arguments);
-      });
-
-      deepEqual(args, [3, 2, array]);
-    });
-
-    test('should support the `thisArg` argument', 1, function() {
-      var actual = _.last(array, function(num, index) {
-        return this[index] > 1;
-      }, array);
-
-      deepEqual(actual, [2, 3]);
-    });
-
-    test('should work with an object for `callback`', 1, function() {
-      deepEqual(_.last(objects, { 'b': 2 }), objects.slice(-1));
-    });
-
-    test('should work with a string for `callback`', 1, function() {
-      deepEqual(_.last(objects, 'b'), objects.slice(-2));
-    });
-
-    test('should chain when passing `n`, `callback`, or `thisArg`', 3, function() {
+    test('should return an unwrapped value when chaining', 1, function() {
       if (!isNpm) {
-        var actual = _(array).last(2);
-
-        ok(actual instanceof _);
-
-        actual = _(array).last(function(num) {
-          return num > 1;
-        });
-
-        ok(actual instanceof _);
-
-        actual = _(array).last(function(num, index) {
-          return this[index] > 1;
-        }, array);
-
-        ok(actual instanceof _);
-      }
-      else {
-        skipTest(3);
-      }
-    });
-
-    test('should not chain when arguments are not provided', 1, function() {
-      if (!isNpm) {
-        var actual = _(array).last();
-        strictEqual(actual, 3);
+        strictEqual(_(array).last(), 3);
       }
       else {
         skipTest();
@@ -5879,20 +6618,23 @@
       strictEqual(_.lastIndexOf(array, 3), 5);
     });
 
-    test('should return `-1` for an unmatched value', 1, function() {
-      strictEqual(_.lastIndexOf(array, 4), -1);
-    });
-
     test('should work with a positive `fromIndex`', 1, function() {
       strictEqual(_.lastIndexOf(array, 1, 2), 0);
     });
 
-    test('should work with `fromIndex` >= `array.length`', 12, function() {
-      _.each([6, 8, Math.pow(2, 32), Infinity], function(fromIndex) {
-        strictEqual(_.lastIndexOf(array, undefined, fromIndex), -1);
-        strictEqual(_.lastIndexOf(array, 1, fromIndex), 3);
-        strictEqual(_.lastIndexOf(array, '', fromIndex), -1);
+    test('should work with `fromIndex` >= `array.length`', 1, function() {
+      var values = [6, 8, Math.pow(2, 32), Infinity],
+          expected = _.map(values, _.constant([-1, 3, -1]));
+
+      var actual = _.map(values, function(fromIndex) {
+        return [
+          _.lastIndexOf(array, undefined, fromIndex),
+          _.lastIndexOf(array, 1, fromIndex),
+          _.lastIndexOf(array, '', fromIndex)
+        ];
       });
+
+      deepEqual(actual, expected);
     });
 
     test('should treat falsey `fromIndex` values, except `0` and `NaN`, as `array.length`', 1, function() {
@@ -5907,19 +6649,31 @@
       deepEqual(actual, expected);
     });
 
-    test('should treat non-number `fromIndex` values as `array.length`', 2, function() {
-      strictEqual(_.lastIndexOf(array, 3, '1'), 5);
-      strictEqual(_.lastIndexOf(array, 3, true), 5);
+    test('should perform a binary search when `fromIndex` is a non-number truthy value', 1, function() {
+      var sorted = [4, 4, 5, 5, 6, 6],
+          values = [true, '1', {}],
+          expected = _.map(values, _.constant(3));
+
+      var actual = _.map(values, function(value) {
+        return _.lastIndexOf(sorted, 5, value);
+      });
+
+      deepEqual(actual, expected);
     });
 
     test('should work with a negative `fromIndex`', 1, function() {
       strictEqual(_.lastIndexOf(array, 2, -3), 1);
     });
 
-    test('should work with a negative `fromIndex` <= `-array.length`', 3, function() {
-      _.each([-6, -8, -Infinity], function(fromIndex) {
-        strictEqual(_.lastIndexOf(array, 1, fromIndex), 0);
+    test('should work with a negative `fromIndex` <= `-array.length`', 1, function() {
+      var values = [-6, -8, -Infinity],
+          expected = _.map(values, _.constant(0));
+
+      var actual = _.map(values, function(fromIndex) {
+        return _.lastIndexOf(array, 1, fromIndex);
       });
+
+      deepEqual(actual, expected);
     });
   }());
 
@@ -5927,23 +6681,32 @@
 
   QUnit.module('indexOf methods');
 
-  (function() {
-    _.each(['indexOf', 'lastIndexOf'], function(methodName) {
-      var func = _[methodName];
+  _.each(['indexOf', 'lastIndexOf'], function(methodName) {
+    var func = _[methodName];
 
-      test('`_.' + methodName + '` should accept a falsey `array` argument', 1, function() {
-        var expected = _.map(falsey, _.constant(-1));
+    test('`_.' + methodName + '` should accept a falsey `array` argument', 1, function() {
+      var expected = _.map(falsey, _.constant(-1));
 
-        var actual = _.map(falsey, function(value, index) {
-          try {
-            return index ? func(value) : func();
-          } catch(e) { }
-        });
-
-        deepEqual(actual, expected);
+      var actual = _.map(falsey, function(value, index) {
+        try {
+          return index ? func(value) : func();
+        } catch(e) { }
       });
+
+      deepEqual(actual, expected);
     });
-  }());
+
+    test('`_.' + methodName + '` should return `-1` for an unmatched value', 4, function() {
+      var array = [1, 2, 3],
+          empty = [];
+
+      strictEqual(func(array, 4), -1);
+      strictEqual(func(array, 4, true), -1);
+
+      strictEqual(func(empty, undefined), -1);
+      strictEqual(func(empty, undefined, true), -1);
+    });
+  });
 
   /*--------------------------------------------------------------------------*/
 
@@ -5952,7 +6715,7 @@
   (function() {
     var array = [1, 2, 3];
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.map(array, function() {
@@ -6047,7 +6810,7 @@
   (function() {
     var object = { 'a': 1, 'b': 2, 'c': 3 };
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.mapValues(object, function() {
@@ -6109,46 +6872,89 @@
   QUnit.module('lodash.matches');
 
   (function() {
-    var object = { 'a': 1, 'b': 2, 'c': 3 },
-        sources = [{ 'a': 1 }, { 'a': 1, 'c': 3 }];
-
     test('should create a function that performs a deep comparison between a given object and the `source` object', 6, function() {
-      _.each(sources, function(source, index) {
-        var matches = _.matches(source);
-        strictEqual(matches.length, 1);
+      var object = { 'a': 1, 'b': 2, 'c': 3 },
+          matches = _.matches({ 'a': 1 });
+
+      strictEqual(matches.length, 1);
+      strictEqual(matches(object), true);
+
+      matches = _.matches({ 'b': 1 });
+      strictEqual(matches(object), false);
+
+      matches = _.matches({ 'a': 1, 'c': 3 });
+      strictEqual(matches(object), true);
+
+      matches = _.matches({ 'c': 3, 'd': 4 });
+      strictEqual(matches(object), false);
+
+      object = { 'a': { 'b': { 'c': 1, 'd': 2 }, 'e': 3 }, 'f': 4 };
+      matches = _.matches({ 'a': { 'b': { 'c': 1 } } });
+
+      strictEqual(matches(object), true);
+    });
+
+    test('should compare a variety of `source` object values', 2, function() {
+      var object = { 'a': false, 'b': true, 'c': '3', 'd': 4, 'e': [5], 'f': { 'g': 6 } },
+          otherObject = { 'a': 0, 'b': 1, 'c': 3, 'd': '4', 'e': ['5'], 'f': { 'g': '6' } },
+          matches = _.matches(object);
+
+      strictEqual(matches(object), true);
+      strictEqual(matches(otherObject), false);
+    });
+
+    test('should not change match behavior if `source` is augmented', 9, function() {
+      _.each([{ 'a': { 'b': 2, 'c': 3 } }, { 'a': 1, 'b': 2 }, { 'a': 1 }], function(source, index) {
+        var object = _.cloneDeep(source),
+            matches = _.matches(source);
+
         strictEqual(matches(object), true);
 
-        matches = _.matches(index ? { 'c': 3, 'd': 4 } : { 'b': 1 });
-        strictEqual(matches(object), false);
+        if (index) {
+          source.a = 2;
+          source.b = 1;
+          source.c = 3;
+        } else {
+          source.a.b = 1;
+          source.a.c = 2;
+          source.a.d = 3;
+        }
+        strictEqual(matches(object), true);
+        strictEqual(matches(source), false);
       });
     });
 
     test('should return `true` when comparing an empty `source`', 1, function() {
-      var expected = _.map(empties, _.constant(true));
+      var object = { 'a': 1 },
+          expected = _.map(empties, _.constant(true));
 
       var actual = _.map(empties, function(value) {
         var matches = _.matches(value);
-        return matches(object) === true;
+        return matches(object);
       });
 
       deepEqual(actual, expected);
     });
 
-    test('should not error error for falsey `object` values', 2, function() {
-      var expected = _.map(falsey, _.constant(true));
+    test('should return `true` when comparing a `source` of empty arrays and objects', 1, function() {
+      var objects = [{ 'a': [1], 'b': { 'c': 1 } }, { 'a': [2, 3], 'b': { 'd': 2 } }],
+          matches = _.matches({ 'a': [], 'b': {} }),
+          actual = _.filter(objects, matches);
 
-      _.each(sources, function(source) {
-        var matches = _.matches(source);
+      deepEqual(actual, objects);
+    });
 
-        var actual = _.map(falsey, function(value, index) {
-          try {
-            var result = index ? matches(value) : matches();
-            return result === false;
-          } catch(e) { }
-        });
+    test('should not error for falsey `object` values', 1, function() {
+      var expected = _.map(falsey, _.constant(false)),
+          matches = _.matches({ 'a': 1 });
 
-        deepEqual(actual, expected);
+      var actual = _.map(falsey, function(value, index) {
+        try {
+          return index ? matches(value) : matches();
+        } catch(e) { }
       });
+
+      deepEqual(actual, expected);
     });
 
     test('should return `true` when comparing an empty `source` to a falsey `object`', 1, function() {
@@ -6161,6 +6967,86 @@
           return result === true;
         } catch(e) { }
       });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should search arrays of `source` for values', 3, function() {
+      var objects = [{ 'a': ['b'] }, { 'a': ['c', 'd'] }],
+          matches = _.matches({ 'a': ['d'] }),
+          actual = _.filter(objects, matches);
+
+      deepEqual(actual, [objects[1]]);
+
+      matches = _.matches({ 'a': ['b', 'd'] });
+      actual = _.filter(objects, matches);
+      deepEqual(actual, []);
+
+      matches = _.matches({ 'a': ['d', 'b'] });
+      actual = _.filter(objects, matches);
+      deepEqual(actual, []);
+    });
+
+    test('should perform a partial comparison of all objects within arrays of `source`', 1, function() {
+      var objects = [
+        { 'a': [{ 'b': 1, 'c': 2 }, { 'b': 4, 'c': 5, 'd': 6 }] },
+        { 'a': [{ 'b': 1, 'c': 2 }, { 'b': 4, 'c': 6, 'd': 7 }] }
+      ];
+
+      var matches = _.matches({ 'a': [{ 'b': 1 }, { 'b': 4, 'c': 5 }] }),
+          actual = _.filter(objects, matches);
+
+      deepEqual(actual, [objects[0]]);
+    });
+
+    test('should handle a `source` with `undefined` values', 2, function() {
+      var expected = [false, false, true],
+          matches = _.matches({ 'b': undefined }),
+          objects = [{ 'a': 1 }, { 'a': 1, 'b': 1 }, { 'a': 1, 'b': undefined }],
+          actual = _.map(objects, matches);
+
+      deepEqual(actual, expected);
+
+      matches = _.matches({ 'a': { 'c': undefined } });
+      objects = [{ 'a': { 'b': 1 } }, { 'a':{ 'b':1 , 'c': 1 } }, { 'a': { 'b': 1, 'c': undefined } }];
+      actual = _.map(objects, matches);
+
+      deepEqual(actual, expected);
+    });
+
+    test('should not match by inherited `source` properties', 1, function() {
+      function Foo() {}
+      Foo.prototype = { 'b': 2 };
+
+      var source = new Foo;
+      source.a = 1;
+
+      var objects = [{ 'a': 1 }, { 'a': 1, 'b': 2 }],
+          expected = _.map(objects, _.constant(true)),
+          matches = _.matches(source),
+          actual = _.map(objects, matches);
+
+      deepEqual(actual, expected);
+    });
+
+    test('should work with a function for `source`', 1, function() {
+      function source() {}
+      source.a = 1;
+      source.b = 2;
+
+      var expected = [false, true],
+          matches = _.matches(source),
+          objects = [{ 'a': 1 }, { 'a': 1, 'b': 2 }],
+          actual = _.map(objects, matches);
+
+      deepEqual(actual, expected);
+    });
+
+    test('should match problem JScript properties (test in IE < 9)', 1, function() {
+      var expected = [false, true],
+          matches = _.matches(shadowedObject),
+          objects = [{}, shadowedObject],
+          actual = _.map(objects, matches);
 
       deepEqual(actual, expected);
     });
@@ -6392,7 +7278,7 @@
     });
 
     test('should handle merging if `callback` returns `undefined`', 1, function() {
-      var actual = _.merge({ 'a': { 'b': [1, 1] } }, { 'a': { 'b': [0] } }, function() {});
+      var actual = _.merge({ 'a': { 'b': [1, 1] } }, { 'a': { 'b': [0] } }, _.noop);
       deepEqual(actual, { 'a': { 'b': [0, 1] } });
     });
 
@@ -6463,7 +7349,7 @@
       strictEqual(actual, isMax ? 1 : 3);
     });
 
-    test('`_.' + methodName + '` should pass the correct `callback` arguments when iterating an array', 1, function() {
+    test('`_.' + methodName + '` should provide the correct `callback` arguments when iterating an array', 1, function() {
       var args;
 
       func(array, function() {
@@ -6473,7 +7359,7 @@
       deepEqual(args, [1, 0, array]);
     });
 
-    test('`_.' + methodName + '` should pass the correct `callback` arguments when iterating an object', 1, function() {
+    test('`_.' + methodName + '` should provide the correct `callback` arguments when iterating an object', 1, function() {
       var args,
           object = { 'a': 1, 'b': 2 },
           firstKey = _.first(_.keys(object));
@@ -6497,11 +7383,27 @@
       strictEqual(actual, isMax ? 1 : 3);
     });
 
-    test('`_.' + methodName + '` should work when used as a callback for `_.map`', 1, function() {
-      var array = [[2, 3, 1], [5, 6, 4], [8, 9, 7]],
-          actual = _.map(array, func);
+    test('should work with a "_.pluck" style `callback`', 2, function() {
+      var objects = [{ 'a': 2 }, { 'a': 3 }, { 'a': 1 }],
+          actual = func(objects, 'a');
 
-      deepEqual(actual, isMax ? [3, 6, 9] : [1, 4, 7]);
+      deepEqual(actual, objects[isMax ? 1 : 2]);
+
+      var arrays = [[2], [3], [1]];
+      actual = func(arrays, 0);
+
+      deepEqual(actual, arrays[isMax ? 1 : 2]);
+    });
+
+    test('`_.' + methodName + '` should work when `callback` returns +/-Infinity', 1, function() {
+      var value = isMax ? -Infinity : Infinity,
+          object = { 'a': value };
+
+      var actual = func([object, { 'a': value }], function(object) {
+        return object.a;
+      });
+
+      strictEqual(actual, object);
     });
 
     test('`_.' + methodName + '` should iterate an object', 1, function() {
@@ -6516,24 +7418,24 @@
       });
     });
 
-    test('`_.' + methodName + '` should work when `callback` returns +/-Infinity', 1, function() {
-      var object = { 'a': (isMax ? -Infinity : Infinity) };
-
-      var actual = func([object, { 'a': object.a }], function(object) {
-        return object.a;
-      });
-
-      strictEqual(actual, object);
-    });
-
     test('`_.' + methodName + '` should work with extremely large arrays', 1, function() {
       var array = _.range(0, 5e5);
       strictEqual(func(array), isMax ? 499999 : 0);
     });
 
+    test('`_.' + methodName + '` should work when used as a callback for `_.map`', 2, function() {
+      var array = [[2, 3, 1], [5, 6, 4], [8, 9, 7]],
+          actual = _.map(array, func);
+
+      deepEqual(actual, isMax ? [3, 6, 9] : [1, 4, 7]);
+
+      actual = _.map('abc', func);
+      deepEqual(actual, ['a', 'b', 'c']);
+    });
+
     test('`_.' + methodName + '` should work when chaining on an array with only one value', 1, function() {
       if (!isNpm) {
-        var actual = _([40])[methodName]().value();
+        var actual = _([40])[methodName]();
         strictEqual(actual, 40);
       }
       else {
@@ -6677,19 +7579,19 @@
       ok(pass);
     });
 
-    test('should return the existing wrapper when chaining', 2, function() {
+    test('should return the existing wrapped value when chaining', 2, function() {
       if (!isNpm) {
         _.each([_, wrapper], function(func) {
           if (func === _) {
-            var wrapper = _(source),
-                actual = wrapper.mixin();
+            var wrapped = _(source),
+                actual = wrapped.mixin();
 
             strictEqual(actual.value(), _);
           }
           else {
-            wrapper = _(func);
-            actual = wrapper.mixin(source);
-            strictEqual(actual, wrapper);
+            wrapped = _(func);
+            actual = wrapped.mixin(source);
+            strictEqual(actual, wrapped);
           }
           delete func.a;
           delete func.prototype.a;
@@ -6709,7 +7611,7 @@
 
   (function() {
     test('should always return `undefined`', 1, function() {
-      var values = falsey.concat([], true, new Date, _, {}, /x/, 'a'),
+      var values = empties.concat(true, new Date, _, 1, /x/, 'a'),
           expected = _.map(values, _.constant());
 
       var actual = _.map(values, function(value, index) {
@@ -6738,8 +7640,8 @@
         }, 32);
       }
       else {
-      	skipTest();
-      	QUnit.start();
+        skipTest();
+        QUnit.start();
       }
     });
   }());
@@ -6773,6 +7675,14 @@
       deepEqual(_.omit(new Foo, 'a', 'c'), expected);
     });
 
+    test('should return an empty object when `object` is `null` or `undefined`', 2, function() {
+      objectProto.a = 1;
+      _.each([null, undefined], function(value) {
+        deepEqual(_.omit(value, 'valueOf'), {});
+      });
+      delete objectProto.a;
+    });
+
     test('should work with `arguments` objects as secondary arguments', 1, function() {
       deepEqual(_.omit(object, args), expected);
     });
@@ -6781,7 +7691,17 @@
       deepEqual(_.omit([1, 2, 3], '0', '2'), { '1': 2 });
     });
 
-    test('should work with a callback argument', 1, function() {
+    test('should work with a primitive `object` argument', 1, function() {
+      stringProto.a = 1;
+      stringProto.b = 2;
+
+      deepEqual(_.omit('', 'b'), { 'a': 1 });
+
+      delete stringProto.a;
+      delete stringProto.b;
+    });
+
+    test('should work with a predicate argument', 1, function() {
       var actual = _.omit(object, function(num) {
         return num != 2;
       });
@@ -6789,7 +7709,7 @@
       deepEqual(actual, expected);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `predicate` arguments', 1, function() {
       var args,
           object = { 'a': 1, 'b': 2 },
           lastKey = _.keys(object).pop();
@@ -6823,44 +7743,44 @@
   QUnit.module('lodash.once');
 
   (function() {
-    test('should execute `func` once', 1, function() {
+    test('should execute `func` once', 2, function() {
       var count = 0,
-          once = _.once(function() { count++; });
+          once = _.once(function() { return ++count; });
 
       once();
-      once();
+      strictEqual(once(), 1);
       strictEqual(count, 1);
     });
 
-    test('should not set a `this` binding', 1, function() {
-      var once = _.once(function() { this.count++; }),
+    test('should not set a `this` binding', 2, function() {
+      var once = _.once(function() { return ++this.count; }),
           object = { 'count': 0, 'once': once };
 
       object.once();
-      object.once();
+      strictEqual(object.once(), 1);
       strictEqual(object.count, 1);
     });
 
-    test('should ignore recursive calls', 1, function() {
+    test('should ignore recursive calls', 2, function() {
       var count = 0;
 
       var once = _.once(function() {
-        count++;
         once();
+        return ++count;
       });
 
-      once();
+      strictEqual(once(), 1);
       strictEqual(count, 1);
     });
 
     test('should not throw more than once', 2, function() {
+      var pass = true;
+
       var once = _.once(function() {
         throw new Error;
       });
 
       raises(function() { once(); }, Error);
-
-      var pass = true;
 
       try {
         once();
@@ -7021,16 +7941,34 @@
       strictEqual(_.parseInt('08', 10), 8);
     });
 
-    test('should parse strings with leading whitespace (test in Chrome, Firefox, and Opera)', 8, function() {
-      strictEqual(_.parseInt(whitespace + '10'), 10);
-      strictEqual(_.parseInt(whitespace + '10', 10), 10);
+    test('should parse strings with leading whitespace (test in Chrome, Firefox, and Opera)', 2, function() {
+      var expected = [8, 8, 10, 10, 32, 32, 32, 32];
 
-      strictEqual(_.parseInt(whitespace + '08'), 8);
-      strictEqual(_.parseInt(whitespace + '08', 10), 8);
+      _.times(2, function(index) {
+        var actual = [],
+            func = (index ? (lodashBizarro || {}) : _).parseInt;
 
-      _.each(['0x20', '0X20'], function(string) {
-        strictEqual(_.parseInt(whitespace + string), 32);
-        strictEqual(_.parseInt(whitespace + string, 16), 32);
+        if (func) {
+          _.times(2, function(otherIndex) {
+            var string = otherIndex ? '10' : '08';
+            actual.push(
+              func(whitespace + string, 10),
+              func(whitespace + string)
+            );
+          });
+
+          _.each(['0x20', '0X20'], function(string) {
+            actual.push(
+              func(whitespace + string),
+              func(whitespace + string, 16)
+            );
+          });
+
+          deepEqual(actual, expected);
+        }
+        else {
+          skipTest();
+        }
       });
     });
 
@@ -7038,6 +7976,14 @@
       var object = { 'valueOf': function() { return 0; } };
       strictEqual(_.parseInt('08', object), 8);
       strictEqual(_.parseInt('0x20', object), 32);
+    });
+
+    test('should work when used as a callback for `_.map`', 2, function() {
+      var actual = _.map(['1', '10', '08'], _.parseInt);
+      deepEqual(actual, [1, 10, 8]);
+
+      actual = _.map('123', _.parseInt);
+      deepEqual(actual, [1, 2, 3]);
     });
   }());
 
@@ -7055,8 +8001,8 @@
     });
 
     test('`_.' + methodName + '` creates a function that can be invoked with additional arguments', 1, function() {
-      var fn = function(a, b) { return [a, b]; },
-          expected = ['a', 'b'],
+      var expected = ['a', 'b'],
+          fn = function(a, b) { return [a, b]; },
           par = func(fn, 'a');
 
       deepEqual(par('b'), isPartial ? expected : expected.reverse());
@@ -7075,27 +8021,23 @@
     });
 
     test('`_.' + methodName + '` should support placeholders', 4, function() {
-      if (!isModularize) {
-        var fn = function() { return slice.call(arguments); },
-            par = func(fn, _, 'b', _);
+      var fn = function() { return slice.call(arguments); },
+          ph = func.placeholder,
+          par = func(fn, ph, 'b', ph);
 
-        deepEqual(par('a', 'c'), ['a', 'b', 'c']);
-        deepEqual(par('a'), ['a', 'b', undefined]);
-        deepEqual(par(), [undefined, 'b', undefined]);
+      deepEqual(par('a', 'c'), ['a', 'b', 'c']);
+      deepEqual(par('a'), ['a', 'b', undefined]);
+      deepEqual(par(), [undefined, 'b', undefined]);
 
-        if (isPartial) {
-          deepEqual(par('a', 'c', 'd'), ['a', 'b', 'c', 'd']);
-        } else {
-          par = func(fn, _, 'c', _);
-          deepEqual(par('a', 'b', 'd'), ['a', 'b', 'c', 'd']);
-        }
-      }
-      else {
-        skipTest(4);
+      if (isPartial) {
+        deepEqual(par('a', 'c', 'd'), ['a', 'b', 'c', 'd']);
+      } else {
+        par = func(fn, ph, 'c', ph);
+        deepEqual(par('a', 'b', 'd'), ['a', 'b', 'c', 'd']);
       }
     });
 
-    test('`_.' + methodName + '` should not alter the `this` binding', 3, function() {
+    test('`_.' + methodName + '` should not set a `this` binding', 3, function() {
       var fn = function() { return this.a; },
           object = { 'a': 1 };
 
@@ -7137,7 +8079,7 @@
           par2 = func(par1, 'barney'),
           par3 = func(par1, 'pebbles');
 
-      strictEqual(par1('fred'), isPartial ? 'hi fred' : 'fred hi')
+      strictEqual(par1('fred'), isPartial ? 'hi fred' : 'fred hi');
       strictEqual(par2(), isPartial ? 'hi barney'  : 'barney hi');
       strictEqual(par3(), isPartial ? 'hi pebbles' : 'pebbles hi');
     });
@@ -7174,6 +8116,11 @@
   QUnit.module('methods using `createWrapper`');
 
   (function() {
+    var ph1 = _.bind.placeholder,
+        ph2 = _.bindKey.placeholder,
+        ph3 = _.partial.placeholder,
+        ph4 = _.partialRight.placeholder;
+
     test('combinations of partial functions should work', 1, function() {
       function fn() {
         return slice.call(arguments);
@@ -7215,6 +8162,60 @@
       deepEqual(c(3), expected);
     });
 
+    test('combinations of functions with placeholders should work', 3, function() {
+      function fn() {
+        return slice.call(arguments);
+      }
+
+      var expected = [1, 2, 3, 4, 5, 6],
+          object = { 'fn': fn };
+
+      var a = _.bindKey(object, 'fn', ph2, 2),
+          b = _.partialRight(a, ph4, 6),
+          c = _.partial(b, 1, ph3, 4);
+
+      deepEqual(c(3, 5), expected);
+
+      a = _.bind(fn, object, ph1, 2);
+      b = _.partialRight(a, ph4, 6);
+      c = _.partial(b, 1, ph3, 4);
+
+      deepEqual(c(3, 5), expected);
+
+      a = _.partial(fn, ph3, 2)
+      b = _.bind(a, object, 1, ph1, 4);
+      c = _.partialRight(b, ph4, 6);
+
+      deepEqual(c(3, 5), expected);
+    });
+
+    test('combinations of functions with overlaping placeholders should work', 3, function() {
+      function fn() {
+        return slice.call(arguments);
+      }
+
+      var expected = [1, 2, 3, 4],
+          object = { 'fn': fn };
+
+      var a = _.bindKey(object, 'fn', ph2, 2),
+          b = _.partialRight(a, ph4, 4),
+          c = _.partial(b, ph3, 3);
+
+      deepEqual(c(1), expected);
+
+      a = _.bind(fn, object, ph1, 2);
+      b = _.partialRight(a, ph4, 4);
+      c = _.partial(b, ph3, 3);
+
+      deepEqual(c(1), expected);
+
+      a = _.partial(fn, ph3, 2)
+      b = _.bind(a, object, ph1, 3);
+      c = _.partialRight(b, ph4, 4);
+
+      deepEqual(c(1), expected);
+    });
+
     test('recursively bound functions should work', 1, function() {
       function fn() {
         return this.a;
@@ -7246,7 +8247,7 @@
       deepEqual(actual, [[1, 1], [0]]);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.partition(array, function() {
@@ -7283,7 +8284,7 @@
       deepEqual(_.partition(array, 1), [[array[1]], [array[0], array[2]]]);
     });
 
-    test('should work with a string for `callback`', 1, function() {
+    test('should work with a "_.pluck" style `callback`', 1, function() {
       var objects = [{ 'a': 1 }, { 'a': 1 }, { 'b': 2 }],
           actual = _.partition(objects, 'a');
 
@@ -7320,6 +8321,12 @@
       deepEqual(_.pick(new Foo, 'a', 'c'), expected);
     });
 
+    test('should return an empty object when `object` is `null` or `undefined`', 2, function() {
+      _.each([null, undefined], function(value) {
+        deepEqual(_.pick(value, 'valueOf'), {});
+      });
+    });
+
     test('should work with `arguments` objects as secondary arguments', 1, function() {
       deepEqual(_.pick(object, args), expected);
     });
@@ -7328,7 +8335,11 @@
       deepEqual(_.pick([1, 2, 3], '1'), { '1': 2 });
     });
 
-    test('should work with a callback argument', 1, function() {
+    test('should work with a primitive `object` argument', 1, function() {
+      deepEqual(_.pick('', 'slice'), { 'slice': ''.slice });
+    });
+
+    test('should work with a predicate argument', 1, function() {
       var actual = _.pick(object, function(num) {
         return num != 2;
       });
@@ -7336,7 +8347,7 @@
       deepEqual(actual, expected);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `predicate` arguments', 1, function() {
       var args,
           object = { 'a': 1, 'b': 2 },
           lastKey = _.keys(object).pop();
@@ -7488,7 +8499,7 @@
     });
 
     test('should return `undefined` for nonexistent keys', 2, function() {
-      var array = ['a', 'b',  'c'],
+      var array = ['a', 'b', 'c'],
           actual = _.pullAt(array, [2, 4, 0]);
 
       deepEqual(array, ['b']);
@@ -7542,7 +8553,7 @@
       deepEqual(_.uniq(actual).sort(), [0, 1]);
     });
 
-    test('supports not passing a `max` argument', 1, function() {
+    test('supports not providing a `max` argument', 1, function() {
       ok(_.some(array, function() {
         return _.random(5) !== 5;
       }));
@@ -7574,7 +8585,7 @@
       ok(actual >= min && actual <= max);
     });
 
-    test('supports passing a `floating` argument', 3, function() {
+    test('supports providing a `floating` argument', 3, function() {
       var actual = _.random(true);
       ok(actual % 1 && actual >= 0 && actual <= 1);
 
@@ -7584,6 +8595,18 @@
       actual = _.random(2, 4, true);
       ok(actual % 1 && actual >= 2 && actual <= 4);
     });
+
+    test('should work when used as a callback for `_.map`', 1, function() {
+      var array = [1, 2, 3],
+          actual = _.map(array, _.random),
+          expected = _.map(array, _.constant(true));
+
+      actual = _.map(actual, function(result, index) {
+        return result >= 0 && result <= array[index] && (result % 1) == 0;
+      });
+
+      deepEqual(actual, expected);
+    });
   }());
 
   /*--------------------------------------------------------------------------*/
@@ -7591,15 +8614,15 @@
   QUnit.module('lodash.range');
 
   (function() {
-    test('should work when passing a single `end` argument', 1, function() {
+    test('should work with a single `end` argument', 1, function() {
       deepEqual(_.range(4), [0, 1, 2, 3]);
     });
 
-    test('should work when passing `start` and `end` arguments', 1, function() {
+    test('should work with `start` and `end` arguments', 1, function() {
       deepEqual(_.range(1, 5), [1, 2, 3, 4]);
     });
 
-    test('should work when passing `start`, `end`, and `step` arguments', 1, function() {
+    test('should work with `start`, `end`, and `step` arguments', 1, function() {
       deepEqual(_.range(0, 20, 5), [0, 5, 10, 15]);
     });
 
@@ -7607,11 +8630,11 @@
       deepEqual(_.range(1, 4, 0), [1, 1, 1]);
     });
 
-    test('should work when passing `step` larger than `end`', 1, function() {
+    test('should work with a `step` larger than `end`', 1, function() {
       deepEqual(_.range(1, 5, 20), [1]);
     });
 
-    test('should work when passing a negative `step` argument', 2, function() {
+    test('should work with a negative `step` argument', 2, function() {
       deepEqual(_.range(0, -4, -1), [0, -1, -2, -3]);
       deepEqual(_.range(21, 10, -3), [21, 18, 15, 12]);
     });
@@ -7631,6 +8654,11 @@
       var actual = [_.range('0', 1), _.range('1'), _.range(0, 1, '1'), _.range(NaN), _.range(NaN, NaN)];
       deepEqual(actual, [[0], [0], [0], [], []]);
     });
+
+    test('should work when used as a callback for `_.map`', 1, function() {
+      var actual = _.map([1, 2, 3], _.range);
+      deepEqual(actual, [[0], [0, 1], [0, 1, 2]]);
+    });
   }());
 
   /*--------------------------------------------------------------------------*/
@@ -7644,7 +8672,7 @@
       strictEqual(_.reduce(array), 1);
     });
 
-    test('should pass the correct `callback` arguments when iterating an array', 2, function() {
+    test('should provide the correct `callback` arguments when iterating an array', 2, function() {
       var args;
 
       _.reduce(array, function() {
@@ -7661,7 +8689,7 @@
       deepEqual(args, [1, 2, 1, array]);
     });
 
-    test('should pass the correct `callback` arguments when iterating an object', 2, function() {
+    test('should provide the correct `callback` arguments when iterating an object', 2, function() {
       var args,
           object = { 'a': 1, 'b': 2 },
           firstKey = _.first(_.keys(object));
@@ -7723,7 +8751,7 @@
       strictEqual(_.reduceRight(array), 3);
     });
 
-    test('should pass the correct `callback` arguments when iterating an array', 2, function() {
+    test('should provide the correct `callback` arguments when iterating an array', 2, function() {
       var args;
 
       _.reduceRight(array, function() {
@@ -7740,7 +8768,7 @@
       deepEqual(args, [3, 2, 1, array]);
     });
 
-    test('should pass the correct `callback` arguments when iterating an object', 2, function() {
+    test('should provide the correct `callback` arguments when iterating an object', 2, function() {
       var args,
           object = { 'a': 1, 'b': 2 },
           lastKey = _.last(_.keys(object));
@@ -7919,7 +8947,7 @@
       deepEqual(actual, [1, 2]);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `predicate` arguments', 1, function() {
       var args,
           array = [1, 2, 3];
 
@@ -8010,7 +9038,7 @@
     });
 
     test('should return the specified default value for undefined properties', 1, function() {
-      var values = falsey.concat(1, _.constant(1));
+      var values = empties.concat(true, new Date, _.constant(1), 1, /x/, 'a');
 
       var expected = _.transform(values, function(result, value) {
         result.push(value, value);
@@ -8034,12 +9062,6 @@
   (function() {
     var array = [1, 2, 3];
 
-    var objects = [
-      { 'a': 2, 'b': 2 },
-      { 'a': 1, 'b': 1 },
-      { 'a': 0, 'b': 0 }
-    ];
-
     test('should accept a falsey `array` argument', 1, function() {
       var expected = _.map(falsey, _.constant([]));
 
@@ -8056,34 +9078,6 @@
       deepEqual(_.rest(array), [2, 3]);
     });
 
-    test('should exclude the first two elements', 1, function() {
-      deepEqual(_.rest(array, 2), [3]);
-    });
-
-    test('should treat falsey `n` values, except nullish, as `0`', 1, function() {
-      var expected = _.map(falsey, function(value) {
-        return value == null ? [2, 3] : array;
-      });
-
-      var actual = _.map(falsey, function(n) {
-        return _.rest(array, n);
-      });
-
-      deepEqual(actual, expected);
-    });
-
-    test('should return all elements when `n` < `1`', 3, function() {
-      _.each([0, -1, -Infinity], function(n) {
-        deepEqual(_.rest(array, n), array);
-      });
-    });
-
-    test('should return an empty array when `n` >= `array.length`', 4, function() {
-      _.each([3, 4, Math.pow(2, 32), Infinity], function(n) {
-        deepEqual(_.rest(array, n), []);
-      });
-    });
-
     test('should return an empty when querying empty arrays', 1, function() {
       deepEqual(_.rest([]), []);
     });
@@ -8095,42 +9089,18 @@
       deepEqual(actual, [[2, 3], [5, 6], [8, 9]]);
     });
 
-    test('should work with a callback', 1, function() {
-      var actual = _.rest(array, function(num) {
-        return num < 3;
-      });
-
-      deepEqual(actual, [3]);
+    test('should return a wrapped value when chaining', 2, function() {
+      if (!isNpm) {
+        var actual = _(array).rest();
+        ok(actual instanceof _);
+        deepEqual(actual.value(), [2, 3]);
+      }
+      else {
+        skipTest(2);
+      }
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
-      var args;
-
-      _.rest(array, function() {
-        args = slice.call(arguments);
-      });
-
-      deepEqual(args, [1, 0, array]);
-    });
-
-    test('should support the `thisArg` argument', 1, function() {
-      var actual = _.rest(array, function(num, index) {
-        return this[index] < 3;
-      }, array);
-
-      deepEqual(actual, [3]);
-    });
-
-    test('should work with an object for `callback`', 1, function() {
-      deepEqual(_.rest(objects, { 'b': 2 }), objects.slice(-2));
-    });
-
-    test('should work with a string for `callback`', 1, function() {
-      deepEqual(_.rest(objects, 'b'), objects.slice(-1));
-    });
-
-    test('should be aliased', 2, function() {
-      strictEqual(_.drop, _.rest);
+    test('should be aliased', 1, function() {
       strictEqual(_.tail, _.rest);
     });
   }());
@@ -8234,16 +9204,18 @@
       ok(actual[0] !== actual[1] && _.contains(array, actual[0]) && _.contains(array, actual[1]));
     });
 
-    test('should work when used as a callback for `_.map`', 1, function() {
-      var a = [1, 2, 3],
-          b = [4, 5, 6],
-          c = [7, 8, 9],
-          actual = _.map([a, b, c], _.sample);
+    test('should work when used as a callback for `_.map`', 2, function() {
+      _.each([[[1, 2, 3], [4, 5, 6], [7, 8, 9]], ['abc', 'def', 'ghi']], function(values) {
+        var a = values[0],
+            b = values[1],
+            c = values[2],
+            actual = _.map([a, b, c], _.sample);
 
-      ok(_.contains(a, actual[0]) && _.contains(b, actual[1]) && _.contains(c, actual[2]));
+        ok(_.contains(a, actual[0]) && _.contains(b, actual[1]) && _.contains(c, actual[2]));
+      });
     });
 
-    test('should chain when passing `n`', 1, function() {
+    test('should chain when `n` is provided', 1, function() {
       if (!isNpm) {
         var actual = _(array).sample(2);
         ok(actual instanceof _);
@@ -8295,9 +9267,12 @@
       deepEqual(_.shuffle(object).sort(), array);
     });
 
-    test('should shuffle an object', 1, function() {
-      var actual = _.shuffle(object);
-      deepEqual(actual.sort(), array);
+    test('should shuffle small collections', 1, function() {
+      var actual = _.times(1000, function() {
+        return _.shuffle([1, 2]);
+      });
+
+      deepEqual(_.sortBy(_.uniq(actual, String), '0'), [[1, 2], [2, 1]]);
     });
 
     test('should treat number values for `collection` as empty', 1, function() {
@@ -8350,7 +9325,7 @@
 
     test('should work with jQuery/MooTools DOM query collections', 1, function() {
       function Foo(elements) { push.apply(this, elements); }
-      Foo.prototype = { 'length': 0, 'splice': Array.prototype.splice };
+      Foo.prototype = { 'length': 0, 'splice': arrayProto.splice };
 
       strictEqual(_.size(new Foo(array)), 3);
     });
@@ -8359,8 +9334,8 @@
       strictEqual(_.size({ 'length': -1 }), 1);
     });
 
-    test('should not treat objects with lengths larger than `maxSafeInteger` as array-like', 1, function() {
-      strictEqual(_.size({ 'length': maxSafeInteger + 1 }), 1);
+    test('should not treat objects with lengths larger than `MAX_SAFE_INTEGER` as array-like', 1, function() {
+      strictEqual(_.size({ 'length': MAX_SAFE_INTEGER + 1 }), 1);
     });
 
     test('should not treat objects with non-number lengths as array-like', 1, function() {
@@ -8419,6 +9394,12 @@
       });
     });
 
+    test('should work with `start` >= `end`', 2, function() {
+      _.each([2, 3], function(start) {
+        deepEqual(_.slice(array, start, 2), []);
+      });
+    });
+
     test('should work with a positive `end`', 1, function() {
       deepEqual(_.slice(array, 0, 1), [1]);
     });
@@ -8474,21 +9455,21 @@
       deepEqual(actual, expected);
     });
 
-    test('should return `true` if the callback returns truthy for any element in the collection', 2, function() {
+    test('should return `true` if `predicate` returns truthy for any element in the collection', 2, function() {
       strictEqual(_.some([false, 1, ''], _.identity), true);
       strictEqual(_.some([null, 'x', 0], _.identity), true);
     });
 
-    test('should return `false` if the callback returns falsey for all elements in the collection', 2, function() {
+    test('should return `false` if `predicate` returns falsey for all elements in the collection', 2, function() {
       strictEqual(_.some([false, false, false], _.identity), false);
       strictEqual(_.some([null, 0, ''], _.identity), false);
     });
 
-    test('should return `true` as soon as the `callback` result is truthy', 1, function() {
+    test('should return `true` as soon as `predicate` returns truthy', 1, function() {
       strictEqual(_.some([null, true, null], _.identity), true);
     });
 
-    test('should use `_.identity` when no callback is provided', 2, function() {
+    test('should use `_.identity` when no predicate is provided', 2, function() {
       strictEqual(_.some([0, 1]), true);
       strictEqual(_.some([0, 0]), false);
     });
@@ -8550,12 +9531,12 @@
       deepEqual(_.sortBy(array, _.identity), [1, 2, 3, 4, undefined, undefined]);
     });
 
-    test('should use `_.identity` when no `callback` is provided', 1, function() {
+    test('should use `_.identity` when no predicate is provided', 1, function() {
       var actual = _.sortBy([3, 2, 1]);
       deepEqual(actual, [1, 2, 3]);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.sortBy(objects, function() {
@@ -8573,7 +9554,7 @@
       deepEqual(actual, [3, 1, 2]);
     });
 
-    test('should work with a string for `callback`', 1, function() {
+    test('should work with a "_.pluck" style `callback`', 1, function() {
       var actual = _.pluck(_.sortBy(objects, 'b'), 'b');
       deepEqual(actual, [1, 2, 3, 4]);
     });
@@ -8616,38 +9597,112 @@
   QUnit.module('lodash.sortedIndex');
 
   (function() {
-    var array = [20, 30, 50],
-        objects = [{ 'x': 20 }, { 'x': 30 }, { 'x': 50 }];
+    test('should return the correct insert index', 1, function() {
+      var array = [30, 50],
+          values = [30, 40, 50],
+          expected = [0, 1, 1];
 
-    test('should return the insert index of a given value', 2, function() {
-      strictEqual(_.sortedIndex(array, 40), 2);
-      strictEqual(_.sortedIndex(array, 30), 1);
+      var actual = _.map(values, function(value) {
+        return _.sortedIndex(array, value);
+      });
+
+      deepEqual(actual, expected);
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should work with an array of strings', 1, function() {
+      var array = ['a', 'c'],
+          values = ['a', 'b', 'c'],
+          expected = [0, 1, 1];
+
+      var actual = _.map(values, function(value) {
+        return _.sortedIndex(array, value);
+      });
+
+      deepEqual(actual, expected);
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('lodash.sortedLastIndex');
+
+  (function() {
+    test('should return the correct insert index', 1, function() {
+      var array = [30, 50],
+          values = [30, 40, 50],
+          expected = [1, 1, 2];
+
+      var actual = _.map(values, function(value) {
+        return _.sortedLastIndex(array, value);
+      });
+
+      deepEqual(actual, expected);
+    });
+
+    test('should work with an array of strings', 1, function() {
+      var array = ['a', 'c'],
+          values = ['a', 'b', 'c'],
+          expected = [1, 1, 2];
+
+      var actual = _.map(values, function(value) {
+        return _.sortedLastIndex(array, value);
+      });
+
+      deepEqual(actual, expected);
+    });
+  }());
+
+  /*--------------------------------------------------------------------------*/
+
+  QUnit.module('sortedIndex methods');
+
+  _.each(['sortedIndex', 'sortedLastIndex'], function(methodName) {
+    var array = [30, 50],
+        func = _[methodName],
+        objects = [{ 'x': 30 }, { 'x': 50 }];
+
+    test('`_.' + methodName + '` should provide the correct `callback` arguments', 1, function() {
       var args;
 
-      _.sortedIndex(array, 40, function() {
+      func(array, 40, function() {
         args || (args = slice.call(arguments));
       });
 
       deepEqual(args, [40]);
     });
 
-    test('should support the `thisArg` argument', 1, function() {
-      var actual = _.sortedIndex(array, 40, function(num) {
+    test('`_.' + methodName + '` should support the `thisArg` argument', 1, function() {
+      var actual = func(array, 40, function(num) {
         return this[num];
-      }, { '20': 20, '30': 30, '40': 40 });
+      }, { '30': 30, '40': 40, '50': 50 });
 
-      strictEqual(actual, 2);
+      strictEqual(actual, 1);
     });
 
-    test('should work with a string for `callback`', 1, function() {
-      var actual = _.sortedIndex(objects, { 'x': 40 }, 'x');
-      strictEqual(actual, 2);
+    test('`_.' + methodName + '` should work with a "_.pluck" style `callback`', 1, function() {
+      var actual = func(objects, { 'x': 40 }, 'x');
+      strictEqual(actual, 1);
     });
 
-    test('supports arrays with lengths larger than `Math.pow(2, 31) - 1`', 1, function() {
+    test('`_.' + methodName + '` should align with `_.sortBy`', 8, function() {
+      var array = [NaN, 1, 2, {}, NaN, undefined];
+      deepEqual(_.sortBy(array), array);
+      strictEqual(func(array, 3), 5);
+
+      array = [1, 2, NaN, {}, NaN, undefined];
+      deepEqual(_.sortBy(array), array);
+      strictEqual(func(array, 3), 5);
+
+      array = [NaN, '1', '2', {}, NaN, undefined];
+      deepEqual(_.sortBy(array), array);
+      strictEqual(func(array, '3'), 3);
+
+      array = ['1', '2', NaN, {}, NaN, undefined];
+      deepEqual(_.sortBy(array), array);
+      strictEqual(func(array, '3'), 2);
+    });
+
+    test('`_.' + methodName + '` should support arrays larger than `Math.pow(2, 31) - 1`', 1, function() {
       var length = Math.pow(2, 32) - 1,
           index = length - 1,
           array = Array(length),
@@ -8655,14 +9710,14 @@
 
       if (array.length == length) {
         array[index] = index;
-        _.sortedIndex(array, index, function() { steps++; });
+        func(array, index, function() { steps++; });
         strictEqual(steps, 33);
       }
       else {
         skipTest();
       }
     });
-  }());
+  });
 
   /*--------------------------------------------------------------------------*/
 
@@ -8718,7 +9773,7 @@
     });
 
     test('should work with `position` >= `string.length`', 4, function() {
-      _.each([3, 5, maxSafeInteger, Infinity], function(position) {
+      _.each([3, 5, MAX_SAFE_INTEGER, Infinity], function(position) {
         strictEqual(_.startsWith(string, 'a', position), false);
       });
     });
@@ -8741,7 +9796,7 @@
     });
 
     test('should always return `true` when `target` is an empty string regardless of `position`', 1, function() {
-      ok(_.every([-Infinity, NaN, -3, -1, 0, 1, 2, 3, 5, maxSafeInteger, Infinity], function(position) {
+      ok(_.every([-Infinity, NaN, -3, -1, 0, 1, 2, 3, 5, MAX_SAFE_INTEGER, Infinity], function(position) {
         return _.startsWith(string, '', position, true);
       }));
     });
@@ -8796,7 +9851,7 @@
       }
     });
 
-    test('should return intercept unwrapped values and return wrapped values when chaining', 2, function() {
+    test('should intercept unwrapped values and return wrapped values when chaining', 2, function() {
       if (!isNpm) {
         var intercepted,
             array = [1, 2, 3];
@@ -8917,8 +9972,8 @@
 
     test('should parse ES6 template delimiters', 2, function() {
       var data = { 'value': 2 };
-      strictEqual(_.template('1${value}3', data), '123');
-      strictEqual(_.template('${"{" + value + "\\}"}', data), '{2}');
+      strictEqual(_.template('1${value}3')(data), '123');
+      strictEqual(_.template('${"{" + value + "\\}"}')(data), '{2}');
     });
 
     test('should not reference `_.escape` when "escape" delimiters are not used', 1, function() {
@@ -8938,47 +9993,49 @@
       strictEqual(compiled({ 'value': true }), 'yap');
     });
 
-    test('should work with custom `_.templateSettings` delimiters', 1, function() {
-      var settings = _.clone(_.templateSettings);
+    test('should work with custom delimiters', 2, function() {
+      _.times(2, function(index) {
+        var settingsClone = _.clone(_.templateSettings);
 
-      _.assign(_.templateSettings, {
-        'escape': /\{\{-([\s\S]+?)\}\}/g,
-        'evaluate': /\{\{([\s\S]+?)\}\}/g,
-        'interpolate': /\{\{=([\s\S]+?)\}\}/g
+        var settings = _.assign(index ? _.templateSettings : {}, {
+          'escape': /\{\{-([\s\S]+?)\}\}/g,
+          'evaluate': /\{\{([\s\S]+?)\}\}/g,
+          'interpolate': /\{\{=([\s\S]+?)\}\}/g
+        });
+
+        var compiled = _.template('<ul>{{ _.each(collection, function(value, index) { }}<li>{{= index }}: {{- value }}</li>{{ }); }}</ul>', index ? null : settings),
+            expected = '<ul><li>0: a &amp; A</li><li>1: b &amp; B</li></ul>';
+
+        strictEqual(compiled({ 'collection': ['a & A', 'b & B'] }), expected);
+        _.assign(_.templateSettings, settingsClone);
       });
-
-      var compiled = _.template('<ul>{{ _.each(collection, function(value, index) { }}<li>{{= index }}: {{- value }}</li>{{ }); }}</ul>'),
-          expected = '<ul><li>0: a &amp; A</li><li>1: b &amp; B</li></ul>';
-
-      strictEqual(compiled({ 'collection': ['a & A', 'b & B'] }), expected);
-      _.assign(_.templateSettings, settings);
     });
 
-    test('should work with `_.templateSettings` delimiters containing special characters', 1, function() {
-      var settings = _.clone(_.templateSettings);
+    test('should work with custom delimiters containing special characters', 2, function() {
+      _.times(2, function(index) {
+        var settingsClone = _.clone(_.templateSettings);
 
-      _.assign(_.templateSettings, {
-        'escape': /<\?-([\s\S]+?)\?>/g,
-        'evaluate': /<\?([\s\S]+?)\?>/g,
-        'interpolate': /<\?=([\s\S]+?)\?>/g
+        var settings = _.assign(index ? _.templateSettings : {}, {
+          'escape': /<\?-([\s\S]+?)\?>/g,
+          'evaluate': /<\?([\s\S]+?)\?>/g,
+          'interpolate': /<\?=([\s\S]+?)\?>/g
+        });
+
+        var compiled = _.template('<ul><? _.each(collection, function(value, index) { ?><li><?= index ?>: <?- value ?></li><? }); ?></ul>', index ? null : settings),
+            expected = '<ul><li>0: a &amp; A</li><li>1: b &amp; B</li></ul>';
+
+        strictEqual(compiled({ 'collection': ['a & A', 'b & B'] }), expected);
+        _.assign(_.templateSettings, settingsClone);
       });
-
-      var compiled = _.template('<ul><? _.each(collection, function(value, index) { ?><li><?= index ?>: <?- value ?></li><? }); ?></ul>'),
-          expected = '<ul><li>0: a &amp; A</li><li>1: b &amp; B</li></ul>';
-
-      strictEqual(compiled({ 'collection': ['a & A', 'b & B'] }), expected);
-      _.assign(_.templateSettings, settings);
     });
 
     test('should work with no delimiters', 1, function() {
       var expected = 'abc';
-      strictEqual(_.template(expected, {}), expected);
+      strictEqual(_.template(expected)({}), expected);
     });
 
     test('should support the "imports" option', 1, function() {
-      var options = { 'imports': { 'a': 1 } },
-          compiled = _.template('<%= a %>', null, options);
-
+      var compiled = _.template('<%= a %>', { 'imports': { 'a': 1 } });
       strictEqual(compiled({}), '1');
     });
 
@@ -8986,7 +10043,7 @@
       var compiled = _.template(
         '<% _.each( data.a, function( value ) { %>' +
             '<%= value.valueOf() %>' +
-        '<% }) %>', null, { 'variable': 'data' }
+        '<% }) %>', { 'variable': 'data' }
       );
 
       try {
@@ -8995,6 +10052,11 @@
       } catch(e) {
         ok(false);
       }
+    });
+
+    test('should support the legacy `options` param signature', 1, function() {
+      var compiled = _.template('<%= data.a %>', null, { 'variable': 'data' });
+      strictEqual(compiled({ 'a': 1 }), '1');
     });
 
     test('should use a `with` statement by default', 1, function() {
@@ -9009,7 +10071,7 @@
       strictEqual(compiled(), 'abc');
 
       var object = { 'b': 'B' };
-      object.compiled = _.template('A<%= this.b %>C', null, { 'variable': 'obj' });
+      object.compiled = _.template('A<%= this.b %>C', { 'variable': 'obj' });
       strictEqual(object.compiled(), 'ABC');
     });
 
@@ -9043,8 +10105,8 @@
 
     test('should work with templates containing newlines and comments', 1, function() {
       var compiled = _.template('<%\n\
-	// comment\n\
-	if (value) { value += 3; }\n\
+        // comment\n\
+        if (value) { value += 3; }\n\
         %><p><%= value %></p>'
       );
 
@@ -9080,7 +10142,7 @@
     });
 
     test('should match delimiters before escaping text', 1, function() {
-      var compiled = _.template('<<\n a \n>>', null, { 'evaluate': /<<(.*?)>>/g });
+      var compiled = _.template('<<\n a \n>>', { 'evaluate': /<<(.*?)>>/g });
       strictEqual(compiled(), '<<\n a \n>>');
     });
 
@@ -9096,14 +10158,14 @@
 
     test('should parse delimiters with newlines', 1, function() {
       var expected = '<<\nprint("<p>" + (value ? "yes" : "no") + "</p>")\n>>',
-          compiled = _.template(expected, null, { 'evaluate': /<<(.+?)>>/g }),
+          compiled = _.template(expected, { 'evaluate': /<<(.+?)>>/g }),
           data = { 'value': true };
 
       strictEqual(compiled(data), expected);
     });
 
     test('should support recursive calls', 1, function() {
-      var compiled = _.template('<%= a %><% a = _.template(c, obj) %><%= a %>'),
+      var compiled = _.template('<%= a %><% a = _.template(c)(obj) %><%= a %>'),
           data = { 'a': 'A', 'b': 'B', 'c': '<%= b %>' };
 
       strictEqual(compiled(data), 'AB');
@@ -9113,12 +10175,12 @@
       var data = { 'a': 1 },
           object = { 'toString': function() { return '<%= a %>'; } };
 
-      strictEqual(_.template(object, data), '1');
+      strictEqual(_.template(object)(data), '1');
     });
 
     test('should not augment the `options` object', 1, function() {
       var options = {};
-      _.template('', {}, options);
+      _.template('', options);
       deepEqual(options, {});
     });
 
@@ -9135,7 +10197,7 @@
       var pass = true;
 
       try {
-        _.template('', 1);
+        _.template('')(1);
       } catch(e) {
         pass = false;
       }
@@ -9144,7 +10206,7 @@
       pass = true;
 
       try {
-        _.template('', 1, 1);
+        _.template('', 1)(1);
       } catch(e) {
         pass = false;
       }
@@ -9320,10 +10382,10 @@
     });
 
     _.times(2, function(index) {
-      test('should trigger a call when invoked repeatedly' + (index ? ' and `leading` is `false`' : ''), 1, function() {
+      asyncTest('should trigger a call when invoked repeatedly' + (index ? ' and `leading` is `false`' : ''), 1, function() {
         if (!(isRhino && isModularize)) {
           var count = 0,
-              limit = 256,
+              limit = (argv || isPhantom) ? 1000 : 320,
               options = index ? { 'leading': false } : {};
 
           var throttled = _.throttle(function() {
@@ -9334,10 +10396,16 @@
           while ((new Date - start) < limit) {
             throttled();
           }
-          ok(count > 1);
+          var actual = count > 1;
+
+          setTimeout(function() {
+            ok(actual);
+            QUnit.start();
+          }, 1);
         }
         else {
           skipTest();
+          QUnit.start();
         }
       });
     });
@@ -9512,7 +10580,7 @@
         setTimeout(function() {
           deepEqual(actual, expected);
           QUnit.start();
-        }, 48);
+        }, 42);
       }
       else {
         skipTest(2);
@@ -9632,8 +10700,10 @@
           var nodeList = document.getElementsByTagName('body'),
               actual = func(nodeList);
         } catch(e) { }
+
         deepEqual(actual, [body]);
-      } else {
+      }
+      else {
         skipTest();
       }
     });
@@ -9644,18 +10714,13 @@
   QUnit.module('lodash.times');
 
   (function() {
-    test('should rollover large `n` values', 1, function() {
-      var actual = _.times(Math.pow(2, 32) + 1);
-      deepEqual(actual, [0]);
-    });
-
     test('should coerce non-finite `n` values to `0`', 3, function() {
       _.each([-Infinity, NaN, Infinity], function(n) {
         deepEqual(_.times(n), []);
       });
     });
 
-    test('should pass the correct `callback` arguments', 1, function() {
+    test('should provide the correct `callback` arguments', 1, function() {
       var args;
 
       _.times(1, function() {
@@ -9749,7 +10814,7 @@
       'object': { 'a': 1, 'b': 2, 'c': 3 }
     },
     function(object, key) {
-      test('should pass the correct `callback` arguments when transforming an ' + key, 2, function() {
+      test('should provide the correct `callback` arguments when transforming an ' + key, 2, function() {
         var args;
 
         _.transform(object, function() {
@@ -9849,10 +10914,9 @@
     test('`_.' + methodName + '` should return an unwrapped value when chaining', 1, function() {
       if (!isNpm) {
         var string = whitespace + 'a b c' + whitespace,
-            expected = (index == 2 ? whitespace : '') + 'a b c' + (index == 1 ? whitespace : ''),
-            actual = _(string)[methodName]();
+            expected = (index == 2 ? whitespace : '') + 'a b c' + (index == 1 ? whitespace : '');
 
-        strictEqual(actual, expected);
+        strictEqual(_(string)[methodName](), expected);
       }
       else {
         skipTest();
@@ -9867,6 +10931,9 @@
   (function() {
     var escaped = '&amp;&lt;&gt;&quot;&#39;\/',
         unescaped = '&<>"\'\/';
+
+    escaped += escaped;
+    unescaped += unescaped;
 
     test('should unescape entities in the correct order', 1, function() {
       strictEqual(_.unescape('&amp;lt;'), '&lt;');
@@ -9931,17 +10998,28 @@
       deepEqual(_.uniq(array), [1, 2, 3]);
     });
 
-    test('should work with `isSorted`', 1, function() {
-      var array = [1, 1, 2, 2, 3];
-      deepEqual(_.uniq([1, 1, 2, 2, 3], true), [1, 2, 3]);
+    test('should treat object instances as uniq', 1, function() {
+      deepEqual(_.uniq(objects), objects);
     });
 
-    test('should work with a callback', 1, function() {
-      var actual = _.uniq(objects, false, function(object) {
-        return object.a;
-      });
+    test('should work with `isSorted`', 3, function() {
+      var expected = [1, 2, 3];
+      deepEqual(_.uniq([1, 2, 3], true), expected);
+      deepEqual(_.uniq([1, 1, 2, 2, 3], true), expected);
+      deepEqual(_.uniq([1, 2, 3, 3, 3, 3, 3], true), expected);
+    });
 
-      deepEqual(actual, objects.slice(0, 3));
+    test('should work with a callback', 2, function() {
+      _.each([objects, _.sortBy(objects, 'a')], function(array, index) {
+        var isSorted = !!index,
+            expected = isSorted ? [objects[2], objects[0], objects[1]] : objects.slice(0, 3);
+
+        var actual = _.uniq(array, isSorted, function(object) {
+          return object.a;
+        });
+
+        deepEqual(actual, expected);
+      });
     });
 
     test('should work with a callback without specifying `isSorted`', 1, function() {
@@ -9960,6 +11038,17 @@
       deepEqual(actual, [1, 2, 3]);
     });
 
+    test('should work with a "_.pluck" style `callback`', 2, function() {
+      var actual = _.uniq(objects, 'a');
+
+      deepEqual(actual, objects.slice(0, 3));
+
+      var arrays = [[2], [3], [1], [2], [3], [1]];
+      actual = _.uniq(arrays, 0);
+
+      deepEqual(actual, arrays.slice(0, 3));
+    });
+
     test('should perform an unsorted uniq operation when used as a callback for `_.map`', 1, function() {
       var array = [[2, 1, 2], [1, 2, 1]],
           actual = _.map(array, _.uniq);
@@ -9970,7 +11059,7 @@
     test('should work with large arrays', 1, function() {
       var object = {};
 
-      var largeArray = _.times(largeArraySize, function(index) {
+      var largeArray = _.times(LARGE_ARRAY_SIZE, function(index) {
         switch (index % 3) {
           case 0: return 0;
           case 1: return 'a';
@@ -9984,7 +11073,7 @@
     test('should work with large arrays of boolean, `null`, and `undefined` values', 1, function() {
       var array = [],
           expected = [true, false, null, undefined],
-          count = Math.ceil(largeArraySize / expected.length);
+          count = Math.ceil(LARGE_ARRAY_SIZE / expected.length);
 
       _.times(count, function() {
         push.apply(array, expected);
@@ -9996,7 +11085,7 @@
     test('should distinguish between numbers and numeric strings', 1, function() {
       var array = [],
           expected = ['2', 2, Object('2'), Object(2)],
-          count = Math.ceil(largeArraySize / expected.length);
+          count = Math.ceil(LARGE_ARRAY_SIZE / expected.length);
 
       _.times(count, function() {
         push.apply(array, expected);
@@ -10036,7 +11125,7 @@
       strictEqual(_.uniq(actual).length, actual.length);
     });
 
-    test('should return a string value when not passing a prefix argument', 1, function() {
+    test('should return a string value when not providing a prefix argument', 1, function() {
       strictEqual(typeof _.uniqueId(), 'string');
     });
 
@@ -10067,119 +11156,42 @@
   QUnit.module('lodash.where');
 
   (function() {
-    var objects = [
-      { 'a': 1 },
-      { 'a': 1 },
-      { 'a': 1, 'b': 2 },
-      { 'a': 2, 'b': 2 },
-      { 'a': 3 }
-    ];
+    test('should filter by `source` properties', 12, function() {
+      var objects = [
+        { 'a': 1 },
+        { 'a': 1 },
+        { 'a': 1, 'b': 2 },
+        { 'a': 2, 'b': 2 },
+        { 'a': 3 }
+      ];
 
-    test('should filter by `source` properties', 6, function() {
-      deepEqual(_.where(objects, { 'a': 1 }), [{ 'a': 1 }, { 'a': 1 }, { 'a': 1, 'b': 2 }]);
-      deepEqual(_.where(objects, { 'a': 2 }), [{ 'a': 2, 'b': 2 }]);
-      deepEqual(_.where(objects, { 'a': 3 }), [{ 'a': 3 }]);
-      deepEqual(_.where(objects, { 'b': 1 }), []);
-      deepEqual(_.where(objects, { 'b': 2 }), [{ 'a': 1, 'b': 2 }, { 'a': 2, 'b': 2 }]);
-      deepEqual(_.where(objects, { 'a': 1, 'b': 2 }), [{ 'a': 1, 'b': 2 }]);
+      var pairs = [
+        [{ 'a': 1 }, [{ 'a': 1 }, { 'a': 1 }, { 'a': 1, 'b': 2 }]],
+        [{ 'a': 2 }, [{ 'a': 2, 'b': 2 }]],
+        [{ 'a': 3 }, [{ 'a': 3 }]],
+        [{ 'b': 1 }, []],
+        [{ 'b': 2 }, [{ 'a': 1, 'b': 2 }, { 'a': 2, 'b': 2 }]],
+        [{ 'a': 1, 'b': 2 }, [{ 'a': 1, 'b': 2 }]]
+      ];
+
+      _.each(pairs, function(pair) {
+        var actual = _.where(objects, pair[0]);
+        deepEqual(actual, pair[1]);
+        ok(_.isEmpty(_.difference(actual, objects)));
+      });
     });
 
-    test('should not filter by inherited `source` properties', 2, function() {
-      function Foo() {}
-      Foo.prototype = { 'a': 2 };
-
-      var source = new Foo;
-      source.b = 2;
-
-      var expected = [objects[2], objects[3]],
-          actual = _.where(objects, source);
-
-      deepEqual(actual, expected);
-      ok(_.isEmpty(_.difference(actual, objects)));
-    });
-
-    test('should filter by problem JScript properties (test in IE < 9)', 1, function() {
-      var collection = [shadowedObject];
-      deepEqual(_.where(collection, shadowedObject), [shadowedObject]);
-    });
-
-    test('should work with an object for `collection`', 2, function() {
-      var collection = {
+    test('should work with an object for `collection`', 1, function() {
+      var object = {
         'x': { 'a': 1 },
         'y': { 'a': 3 },
         'z': { 'a': 1, 'b': 2 }
       };
 
-      var expected = [collection.x, collection.z],
-          actual = _.where(collection, { 'a': 1 });
+      var actual = _.where(object, { 'a': 1 }),
+          expected = [object.x, object.z];
 
       deepEqual(actual, expected);
-      ok(_.isEmpty(_.difference(actual, _.values(collection))));
-    });
-
-    test('should work with a function for `source`', 1, function() {
-      function source() {}
-      source.a = 2;
-
-      deepEqual(_.where(objects, source), [{ 'a': 2, 'b': 2 }]);
-    });
-
-    test('should match all elements when provided an empty `source`', 1, function() {
-      var expected = _.map(empties, _.constant(objects));
-
-      var actual = _.map(empties, function(value) {
-        var result = _.where(objects, value);
-        return result !== objects && result;
-      });
-
-      deepEqual(actual, expected);
-    });
-
-    test('should perform a deep partial comparison of `source`', 2, function() {
-      var collection = [{ 'a': { 'b': { 'c': 1, 'd': 2 }, 'e': 3 }, 'f': 4 }],
-          expected = collection.slice(),
-          actual = _.where(collection, { 'a': { 'b': { 'c': 1 } } });
-
-      deepEqual(actual, expected);
-      ok(_.isEmpty(_.difference(actual, collection)));
-    });
-
-    test('should search of arrays for values', 2, function() {
-      var collection = [{ 'a': [1, 2] }],
-          expected = collection.slice();
-
-      deepEqual(_.where(collection, { 'a': [] }), []);
-      deepEqual(_.where(collection, { 'a': [2] }), expected);
-    });
-
-    test('should perform a partial comparison of *all* objects within arrays of `source`', 2, function() {
-      var collection = [
-        { 'a': [{ 'b': 1, 'c': 2, 'd': 3 }, { 'b': 4, 'c': 5, 'd': 6 }] },
-        { 'a': [{ 'b': 1, 'c': 2, 'd': 3 }, { 'b': 4, 'c': 6, 'd': 7 }] }
-      ];
-
-      var actual = _.where(collection, { 'a': [{ 'b': 1, 'c': 2 }, { 'b': 4, 'c': 5 }] });
-      deepEqual(actual, [collection[0]]);
-      ok(_.isEmpty(_.difference(actual, collection)));
-    });
-
-    test('should handle a `source` with `undefined` values', 4, function() {
-      var source = { 'b': undefined },
-          actual = _.where([{ 'a': 1 }, { 'a': 1, 'b': 1 }], source);
-
-      deepEqual(actual, []);
-
-      var object = { 'a': 1, 'b': undefined };
-      actual = _.where([object], source);
-      deepEqual(actual, [object]);
-
-      source = { 'a': { 'c': undefined } };
-      actual = _.where([{ 'a': { 'b': 1 } }, { 'a':{ 'b':1 , 'c': 1 } }], source);
-      deepEqual(actual, []);
-
-      object = { 'a': { 'b': 1, 'c': undefined } };
-      actual = _.where([object], source);
-      deepEqual(actual, [object]);
     });
   }());
 
@@ -10216,7 +11228,7 @@
       strictEqual(p('fred, barney, & pebbles'), '<p>fred, barney, &amp; pebbles</p>');
     });
 
-    test('should pass the correct `wrapper` arguments', 1, function() {
+    test('should provide the correct `wrapper` arguments', 1, function() {
       var args;
 
       var wrapped = _.wrap(_.noop, function() {
@@ -10288,9 +11300,12 @@
 
   /*--------------------------------------------------------------------------*/
 
-  QUnit.module('lodash.zip');
+  QUnit.module('lodash.unzip and lodash.zip');
 
-  (function() {
+  _.each(['unzip', 'zip'], function(methodName) {
+    var func = _[methodName];
+    func = _.bind(methodName == 'zip' ? func.apply : func.call, func, null);
+
     var object = {
       'an empty array': [
         [],
@@ -10311,37 +11326,43 @@
     };
 
     _.forOwn(object, function(pair, key) {
-      test('should work with ' + key, 2, function() {
-        var actual = _.zip.apply(_, pair[0]);
+      test('`_.' + methodName + '` should work with ' + key, 2, function() {
+        var actual = func(pair[0]);
         deepEqual(actual, pair[1]);
-        deepEqual(_.zip.apply(_, actual), actual.length ? pair[0] : []);
+        deepEqual(func(actual), actual.length ? pair[0] : []);
       });
     });
 
-    test('should work with tuples of different lengths', 4, function() {
+    test('`_.' + methodName + '` should work with tuples of different lengths', 4, function() {
       var pair = [
         [['barney', 36], ['fred', 40, false]],
         [['barney', 'fred'], [36, 40], [undefined, false]]
       ];
 
-      var actual = _.zip(pair[0]);
+      var actual = func(pair[0]);
       ok('0' in actual[2]);
       deepEqual(actual, pair[1]);
 
-      actual = _.zip.apply(_, actual);
+      actual = func(actual);
       ok('2' in actual[0]);
       deepEqual(actual, [['barney', 36, undefined], ['fred', 40, false]]);
     });
 
-    test('should support consuming its return value', 1, function() {
-      var expected = [['barney', 'fred'], [36, 40]];
-      deepEqual(_.zip(_.zip(_.zip(_.zip(expected)))), expected);
+    test('`_.' + methodName + '` should treat falsey values as empty arrays', 1, function() {
+      var expected = _.map(falsey, _.constant([]));
+
+      var actual = _.map(falsey, function(value) {
+        return func([value, value, value]);
+      });
+
+      deepEqual(actual, expected);
     });
 
-    test('should be aliased', 1, function() {
-      strictEqual(_.unzip, _.zip);
+    test('`_.' + methodName + '` should support consuming its return value', 1, function() {
+      var expected = [['barney', 'fred'], [36, 40]];
+      deepEqual(func(func(func(func(expected)))), expected);
     });
-  }());
+  });
 
   /*--------------------------------------------------------------------------*/
 
@@ -10465,7 +11486,7 @@
       }
     });
 
-    test('should stringify the wrapped value when passed to `JSON.stringify`', 1, function() {
+    test('should stringify the wrapped value when used by `JSON.stringify`', 1, function() {
       if (!isNpm && JSON) {
         var wrapped = _([1, 2, 3]);
         strictEqual(JSON.stringify(wrapped), '[1,2,3]');
@@ -10529,12 +11550,14 @@
     ];
 
     _.each(funcs, function(methodName) {
-      test('`_(...).' + methodName + '` should return a new wrapped value', 1, function() {
+      test('`_(...).' + methodName + '` should return a new wrapped value', 2, function() {
         if (!isNpm) {
-          ok(wrapped[methodName]() instanceof _);
+          var actual = wrapped[methodName]();
+          ok(actual instanceof _);
+          notStrictEqual(actual, wrapped);
         }
         else {
-          skipTest();
+          skipTest(2);
         }
       });
     });
@@ -10562,6 +11585,7 @@
       'isElement',
       'isEmpty',
       'isEqual',
+      'isError',
       'isFinite',
       'isFunction',
       'isNaN',
@@ -10574,8 +11598,12 @@
       'isUndefined',
       'join',
       'last',
+      'max',
+      'min',
+      'parseInt',
       'pop',
       'shift',
+      'random',
       'reduce',
       'reduceRight',
       'some'
@@ -10584,10 +11612,7 @@
     _.each(funcs, function(methodName) {
       test('`_(...).' + methodName + '` should return an unwrapped value', 1, function() {
         if (!isNpm) {
-          var actual = methodName == 'reduceRight'
-            ? wrapped[methodName](_.identity)
-            : wrapped[methodName]();
-
+          var actual = wrapped[methodName]();
           ok(!(actual instanceof _));
         }
         else {
@@ -10606,15 +11631,14 @@
         wrapped = _(array);
 
     var funcs = [
-      'first',
-      'last',
       'sample'
     ];
 
     _.each(funcs, function(methodName) {
       test('`_(...).' + methodName + '` called without an `n` argument should return an unwrapped value', 1, function() {
         if (!isNpm) {
-          strictEqual(typeof wrapped[methodName](), 'number');
+          var actual = wrapped[methodName]();
+          strictEqual(typeof actual, 'number');
         }
         else {
           skipTest();
@@ -10677,7 +11701,7 @@
     var args = arguments,
         array = [1, 2, 3, 4, 5, 6];
 
-    test('should work with `arguments` objects', 23, function() {
+    test('should work with `arguments` objects', 31, function() {
       function message(methodName) {
         return '`_.' + methodName + '` should work with `arguments` objects';
       }
@@ -10692,17 +11716,25 @@
       deepEqual(_.union(array, args), array.concat([null, [3]]), '_.union should work with `arguments` objects as secondary arguments');
 
       deepEqual(_.compact(args), [1, [3], 5], message('compact'));
+      deepEqual(_.drop(args, 3), [null, 5], message('drop'));
+      deepEqual(_.dropRight(args, 3), [1, null], message('dropRight'));
+      deepEqual(_.dropRightWhile(args,_.identity), [1, null, [3], null], message('dropRightWhile'));
+      deepEqual(_.dropWhile(args,_.identity), [ null, [3], null, 5], message('dropWhile'));
       deepEqual(_.findIndex(args, _.identity), 0, message('findIndex'));
       deepEqual(_.findLastIndex(args, _.identity), 4, message('findLastIndex'));
       deepEqual(_.first(args), 1, message('first'));
       deepEqual(_.flatten(args), [1, null, 3, null, 5], message('flatten'));
       deepEqual(_.indexOf(args, 5), 4, message('indexOf'));
-      deepEqual(_.initial(args, 4), [1], message('initial'));
+      deepEqual(_.initial(args), [1, null, [3], null], message('initial'));
       deepEqual(_.intersection(args, [1]), [1], message('intersection'));
       deepEqual(_.last(args), 5, message('last'));
       deepEqual(_.lastIndexOf(args, 1), 0, message('lastIndexOf'));
-      deepEqual(_.rest(args, 4), [5], message('rest'));
+      deepEqual(_.rest(args, 4), [null, [3], null, 5], message('rest'));
       deepEqual(_.sortedIndex(args, 6), 5, message('sortedIndex'));
+      deepEqual(_.take(args, 2), [1, null], message('take'));
+      deepEqual(_.takeRight(args, 1), [5], message('takeRight'));
+      deepEqual(_.takeRightWhile(args, _.identity), [5], message('takeRightWhile'));
+      deepEqual(_.takeWhile(args, _.identity), [1], message('takeWhile'));
       deepEqual(_.uniq(args), [1, null, [3], 5], message('uniq'));
       deepEqual(_.without(args, null), [1, [3], 5], message('without'));
       deepEqual(_.zip(args, args), [[1, 1], [null, null], [[3], [3]], [null, null], [5, 5]], message('zip'));
@@ -10715,7 +11747,7 @@
         ok(args.length === 1 && _.isEqual(args[0], [3]), message('remove'));
       }
       else {
-        skipTest(2)
+        skipTest(2);
       }
     });
 
@@ -10740,8 +11772,6 @@
       deepEqual(_.union(array, null), array, message('union'));
     });
   }(1, null, [3], null, 5));
-
-  /*--------------------------------------------------------------------------*/
 
   /*--------------------------------------------------------------------------*/
 
@@ -10782,22 +11812,22 @@
   QUnit.module('lodash methods');
 
   (function() {
-    var allMethods = _.reject(_.functions(_), function(methodName) {
+    var allMethods = _.reject(_.functions(_).sort(), function(methodName) {
       return /^_/.test(methodName);
     });
 
     var returnArrays = [
       'at',
+      'chunk',
       'compact',
       'difference',
+      'drop',
       'filter',
-      'first',
       'flatten',
       'functions',
       'initial',
       'intersection',
       'invoke',
-      'last',
       'keys',
       'map',
       'pairs',
@@ -10811,6 +11841,7 @@
       'sample',
       'shuffle',
       'sortBy',
+      'take',
       'times',
       'toArray',
       'union',
@@ -10824,9 +11855,11 @@
 
     var rejectFalsey = [
       'after',
+      'before',
       'bind',
       'compose',
       'curry',
+      'curryRight',
       'debounce',
       'defer',
       'delay',
@@ -10842,7 +11875,7 @@
 
     var acceptFalsey = _.difference(allMethods, rejectFalsey);
 
-    test('should accept falsey arguments', 187, function() {
+    test('should accept falsey arguments', 193, function() {
       var emptyArrays = _.map(falsey, _.constant([])),
           isExposed = '_' in root,
           oldDash = root._;
@@ -10870,8 +11903,7 @@
         else if (methodName == 'pull') {
           expected = falsey;
         }
-        if (_.contains(returnArrays, methodName) &&
-            !_.contains(['first', 'last', 'sample'], methodName)) {
+        if (_.contains(returnArrays, methodName) && methodName != 'sample') {
           deepEqual(actual, expected, '_.' + methodName + ' returns an array');
         }
         ok(pass, '`_.' + methodName + '` accepts falsey arguments');
@@ -10885,7 +11917,7 @@
       });
     });
 
-    test('should return an array', 66, function() {
+    test('should return an array', 68, function() {
       var array = [1, 2, 3];
 
       _.each(returnArrays, function(methodName) {
@@ -10896,8 +11928,6 @@
           case 'invoke':
              actual = func(array, 'toFixed');
              break;
-          case 'first':
-          case 'last':
           case 'sample':
             actual = func(array, 1);
             break;
@@ -10911,7 +11941,7 @@
       });
     });
 
-    test('should throw a TypeError for falsey arguments', 15, function() {
+    test('should throw a TypeError for falsey arguments', 17, function() {
       _.each(rejectFalsey, function(methodName) {
         var expected = _.map(falsey, _.constant(true)),
             func = _[methodName];
@@ -10930,7 +11960,7 @@
       });
     });
 
-    test('should handle `null` `thisArg` arguments', 44, function() {
+    test('should handle `null` `thisArg` arguments', 43, function() {
       var expected = (function() { return this; }).call(null);
 
       var funcs = [
@@ -10941,7 +11971,6 @@
         'dropWhile',
         'dropRightWhile',
         'every',
-        'flatten',
         'filter',
         'find',
         'findIndex',

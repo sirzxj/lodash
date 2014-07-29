@@ -406,6 +406,10 @@
         \
         var words = belt.keys(wordToNumber).slice(0, limit);\
       }\
+      if (typeof flatten != "undefined") {\
+        var _flattenDeep = _.flatten([[1]])[0] !== 1,\
+            lodashFlattenDeep = lodash.flatten([[1]]) !== 1;\
+      }\
       if (typeof isEqual != "undefined") {\
         var objectOfPrimitives = {\
           "boolean": true,\
@@ -436,15 +440,25 @@
           numbers2[index] = index;\
         }\
       }\
+      if (typeof matches != "undefined") {\
+        var source = { "num": 9 };\
+        \
+        var _findWhere = _.findWhere || _.find,\
+            _match = _.matches && _.matches(source);\
+        \
+        var lodashFindWhere = lodash.findWhere || lodash.find,\
+            lodashMatch = lodash.matches && lodash.matches(source);\
+      }\
       if (typeof multiArrays != "undefined") {\
         var twentyValues = belt.shuffle(belt.range(20)),\
             fortyValues = belt.shuffle(belt.range(40)),\
-            hundredValues = belt.shuffle(belt.range(100)),\
-            hundredValues2 = belt.shuffle(belt.range(100)),\
+            hundredSortedValues = belt.range(100),\
+            hundredValues = belt.shuffle(hundredSortedValues),\
+            hundredValues2 = belt.shuffle(hundredValues),\
             hundredTwentyValues = belt.shuffle(belt.range(120)),\
-            hundredTwentyValues2 = belt.shuffle(belt.range(120)),\
+            hundredTwentyValues2 = belt.shuffle(hundredTwentyValues),\
             twoHundredValues = belt.shuffle(belt.range(200)),\
-            twoHundredValues2 = belt.shuffle(belt.range(200));\
+            twoHundredValues2 = belt.shuffle(twoHundredValues);\
       }\
       if (typeof partial != "undefined") {\
         var func = function(greeting, punctuation) {\
@@ -498,15 +512,10 @@
         var settingsObject = { "variable": "data" };\
         \
         var _tpl = _.template(tpl),\
-            _tplVerbose = _.template(tplVerbose, null, settingsObject);\
+            _tplVerbose = _.template(tplVerbose, settingsObject);\
         \
         var lodashTpl = lodash.template(tpl),\
-            lodashTplVerbose = lodash.template(tplVerbose, null, settingsObject);\
-      }\
-      if (typeof where != "undefined") {\
-        var _findWhere = _.findWhere || _.find,\
-            lodashFindWhere = lodash.findWhere || lodash.find,\
-            whereObject = { "num": 9 };\
+            lodashTplVerbose = lodash.template(tplVerbose, settingsObject);\
       }\
       if (typeof wrap != "undefined") {\
         var add = function(a, b) {\
@@ -649,6 +658,16 @@
   );
 
   /*--------------------------------------------------------------------------*/
+
+  suites.push(
+    Benchmark.Suite('`_.clone` with an array')
+      .add(buildName, '\
+        lodash.clone(numbers)'
+      )
+      .add(otherName, '\
+        _.clone(numbers)'
+      )
+  );
 
   suites.push(
     Benchmark.Suite('`_.clone` with an object')
@@ -989,12 +1008,12 @@
     suites.push(
       Benchmark.Suite('`_.find` with `properties`')
         .add(buildName, {
-          'fn': 'lodashFindWhere(objects, whereObject)',
-          'teardown': 'function where(){}'
+          'fn': 'lodashFindWhere(objects, source)',
+          'teardown': 'function matches(){}'
         })
         .add(otherName, {
-          'fn': '_findWhere(objects, whereObject)',
-          'teardown': 'function where(){}'
+          'fn': '_findWhere(objects, source)',
+          'teardown': 'function matches(){}'
         })
     );
   }
@@ -1003,32 +1022,38 @@
 
   suites.push(
     Benchmark.Suite('`_.flatten`')
-      .add(buildName, '\
-        lodash.flatten(nestedNumbers)'
-      )
-      .add(otherName, '\
-        _.flatten(nestedNumbers)'
-      )
+      .add(buildName, {
+        'fn': 'lodash.flatten(nestedNumbers, !lodashFlattenDeep)',
+        'teardown': 'function flatten(){}'
+      })
+      .add(otherName, {
+        'fn': '_.flatten(nestedNumbers, !_flattenDeep)',
+        'teardown': 'function flatten(){}'
+      })
   );
 
   suites.push(
-    Benchmark.Suite('`_.flatten` with objects')
-      .add(buildName, '\
-        lodash.flatten(nestedObjects)'
-      )
-      .add(otherName, '\
-        _.flatten(nestedObjects)'
-      )
+    Benchmark.Suite('`_.flatten` nested arrays of numbers with `isDeep`')
+      .add(buildName, {
+        'fn': 'lodash.flatten(nestedNumbers, lodashFlattenDeep)',
+        'teardown': 'function flatten(){}'
+      })
+      .add(otherName, {
+        'fn': '_.flatten(nestedNumbers, _flattenDeep)',
+        'teardown': 'function flatten(){}'
+      })
   );
 
   suites.push(
-    Benchmark.Suite('`_.flatten` with `shallow`')
-      .add(buildName, '\
-        lodash.flatten(nestedNumbers, true)'
-      )
-      .add(otherName, '\
-        _.flatten(nestedNumbers, true)'
-      )
+    Benchmark.Suite('`_.flatten` nest arrays of objects with `isDeep`')
+      .add(buildName, {
+        'fn': 'lodash.flatten(nestedObjects, lodashFlattenDeep)',
+        'teardown': 'function flatten(){}'
+      })
+      .add(otherName, {
+        'fn': '_.flatten(nestedObjects, _flattenDeep)',
+        'teardown': 'function flatten(){}'
+      })
   );
 
   /*--------------------------------------------------------------------------*/
@@ -1120,11 +1145,23 @@
   suites.push(
     Benchmark.Suite('`_.indexOf`')
       .add(buildName, {
-        'fn': 'lodash.indexOf(hundredValues, 99)',
+        'fn': 'lodash.indexOf(hundredSortedValues, 99)',
         'teardown': 'function multiArrays(){}'
       })
       .add(otherName, {
-        'fn': '_.indexOf(hundredValues, 99)',
+        'fn': '_.indexOf(hundredSortedValues, 99)',
+        'teardown': 'function multiArrays(){}'
+      })
+  );
+
+  suites.push(
+    Benchmark.Suite('`_.indexOf` performing a binary search')
+      .add(buildName, {
+        'fn': 'lodash.indexOf(hundredSortedValues, 99, true)',
+        'teardown': 'function multiArrays(){}'
+      })
+      .add(otherName, {
+        'fn': '_.indexOf(hundredSortedValues, 99, true)',
         'teardown': 'function multiArrays(){}'
       })
   );
@@ -1351,12 +1388,26 @@
 
   suites.push(
     Benchmark.Suite('`_.lastIndexOf`')
-      .add(buildName, '\
-        lodash.lastIndexOf(numbers, 9)'
-      )
-      .add(otherName, '\
-        _.lastIndexOf(numbers, 9)'
-      )
+      .add(buildName, {
+        'fn': 'lodash.lastIndexOf(hundredSortedValues, 0)',
+        'teardown': 'function multiArrays(){}'
+      })
+      .add(otherName, {
+        'fn': '_.lastIndexOf(hundredSortedValues, 0)',
+        'teardown': 'function multiArrays(){}'
+      })
+  );
+
+  suites.push(
+    Benchmark.Suite('`_.lastIndexOf` performing a binary search')
+      .add(buildName, {
+        'fn': 'lodash.lastIndexOf(hundredSortedValues, 0, true)',
+        'teardown': 'function multiArrays(){}'
+      })
+      .add(otherName, {
+        'fn': '_.lastIndexOf(hundredSortedValues, 0, true)',
+        'teardown': 'function multiArrays(){}'
+      })
   );
 
   /*--------------------------------------------------------------------------*/
@@ -1401,6 +1452,20 @@
           return value;\
         })'
       )
+  );
+
+  /*--------------------------------------------------------------------------*/
+
+  suites.push(
+    Benchmark.Suite('`_.matches` predicate')
+      .add(buildName, {
+        'fn': 'lodash.filter(objects, lodashMatch)',
+        'teardown': 'function matches(){}'
+      })
+      .add(otherName, {
+        'fn': '_.filter(objects, _match)',
+        'teardown': 'function matches(){}'
+      })
   );
 
   /*--------------------------------------------------------------------------*/
@@ -1808,11 +1873,11 @@
   suites.push(
     Benchmark.Suite('`_.template` (slow path)')
       .add(buildName, {
-        'fn': 'lodash.template(tpl, tplData)',
+        'fn': 'lodash.template(tpl)(tplData)',
         'teardown': 'function template(){}'
       })
       .add(otherName, {
-        'fn': '_.template(tpl, tplData)',
+        'fn': '_.template(tpl)(tplData)',
         'teardown': 'function template(){}'
       })
   );
@@ -1990,12 +2055,12 @@
   suites.push(
     Benchmark.Suite('`_.where`')
       .add(buildName, {
-        'fn': 'lodash.where(objects, whereObject)',
-        'teardown': 'function where(){}'
+        'fn': 'lodash.where(objects, source)',
+        'teardown': 'function matches(){}'
       })
       .add(otherName, {
-        'fn': '_.where(objects, whereObject)',
-        'teardown': 'function where(){}'
+        'fn': '_.where(objects, source)',
+        'teardown': 'function matches(){}'
       })
   );
 

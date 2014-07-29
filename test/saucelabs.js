@@ -4,8 +4,8 @@
 /** Environment shortcut */
 var env = process.env;
 
-if (isFinite(env.TRAVIS_PULL_REQUEST)) {
-  console.log('Skipping Sauce Labs jobs for pull requests');
+if (env.TRAVIS_SECURE_ENV_VARS == 'false') {
+  console.log('Skipping Sauce Labs jobs; secure environment variables are unavailable');
   process.exit(0);
 }
 
@@ -98,12 +98,12 @@ var browserNameMap = {
 var platforms = [
   ['Linux', 'android', '4.3'],
   ['Linux', 'android', '4.0'],
+  ['Windows 8.1', 'firefox', '30'],
   ['Windows 8.1', 'firefox', '29'],
-  ['Windows 8.1', 'firefox', '28'],
   ['Windows 8.1', 'firefox', '20'],
   ['Windows 8.1', 'firefox', '3.0'],
+  ['Windows 8.1', 'chrome', '35'],
   ['Windows 8.1', 'chrome', '34'],
-  ['Windows 8.1', 'chrome', '33'],
   ['Windows 8.1', 'internet explorer', '11'],
   ['Windows 8', 'internet explorer', '10'],
   ['Windows 7', 'internet explorer', '9'],
@@ -113,6 +113,7 @@ var platforms = [
   ['Windows 7', 'opera', '12'],
   ['Windows 7', 'opera', '11'],
   ['OS X 10.9', 'ipad', '7.1'],
+  ['OS X 10.6', 'ipad', '4'],
   ['OS X 10.9', 'safari', '7'],
   ['OS X 10.8', 'safari', '6'],
   ['OS X 10.6', 'safari', '5']
@@ -153,6 +154,7 @@ if (isBackbone) {
 
     switch (browser) {
       case 'Firefox': return version >= 4;
+      case 'iPad': return version >= 5;
       case 'Opera': return version >= 12;
     }
     return true;
@@ -168,6 +170,7 @@ if (isModern) {
       case 'Android': return version >= 4.1;
       case 'Firefox': return version >= 10;
       case 'Internet Explorer': return version >= 9;
+      case 'iPad': return version >= 6;
       case 'Opera': return version >= 12;
       case 'Safari': return version >= 6;
     }
@@ -381,8 +384,12 @@ function onJobStart(error, res, body) {
       this.restart();
       return;
     }
+    var na = 'unavailable',
+        bodyStr = _.isObject(body) ? '\n' + JSON.stringify(body) : na,
+        statusStr = _.isFinite(statusCode) ? statusCode : na;
+
     logInline();
-    console.error('Failed to start job; status: %d, body:\n%s', statusCode, JSON.stringify(body));
+    console.error('Failed to start job; status: %s, body: %s', statusStr, bodyStr);
     if (error) {
       console.error(error);
     }
@@ -467,7 +474,7 @@ function onJobStatus(error, res, body) {
     }
     else {
       if (typeof message == 'undefined') {
-        message = 'no results available. ' + details;
+        message = 'Results are unavailable. ' + details;
       }
       console.error(label, description, chalk.red('failed') + ';', message);
     }
@@ -559,7 +566,7 @@ Job.prototype.remove = function(callback) {
       _.defer(onRemove);
       return;
     }
-    request.del(_.template('https://saucelabs.com/rest/v1/${user}/jobs/${id}', this), {
+    request.del(_.template('https://saucelabs.com/rest/v1/${user}/jobs/${id}')(this), {
       'auth': { 'user': this.user, 'pass': this.pass }
     }, onRemove);
   });
@@ -619,7 +626,7 @@ Job.prototype.start = function(callback) {
     return this;
   }
   this.starting = true;
-  request.post(_.template('https://saucelabs.com/rest/v1/${user}/js-tests', this), {
+  request.post(_.template('https://saucelabs.com/rest/v1/${user}/js-tests')(this), {
     'auth': { 'user': this.user, 'pass': this.pass },
     'json': this.options
   }, _.bind(onJobStart, this));
@@ -641,7 +648,7 @@ Job.prototype.status = function(callback) {
   }
   this._pollerId = null;
   this.checking = true;
-  request.post(_.template('https://saucelabs.com/rest/v1/${user}/js-tests/status', this), {
+  request.post(_.template('https://saucelabs.com/rest/v1/${user}/js-tests/status')(this), {
     'auth': { 'user': this.user, 'pass': this.pass },
     'json': { 'js tests': [this.taskId] }
   }, _.bind(onJobStatus, this));
@@ -672,7 +679,7 @@ Job.prototype.stop = function(callback) {
     _.defer(onStop);
     return this;
   }
-  request.put(_.template('https://saucelabs.com/rest/v1/${user}/jobs/${id}/stop', this), {
+  request.put(_.template('https://saucelabs.com/rest/v1/${user}/jobs/${id}/stop')(this), {
     'auth': { 'user': this.user, 'pass': this.pass }
   }, onStop);
 

@@ -1,6 +1,5 @@
 language: node_js
 node_js:
-  - "0.6"
   - "0.8"
   - "0.10"
 env:
@@ -35,8 +34,8 @@ branches:
     - master
 before_install:
   - "mkdir ~/.npm"
-  - "[ $SAUCE_LABS == false ] || npm i chalk@\"^0.4.0\" ecstatic@\"^0.5.0\" request@\"^2.34.0\" sauce-tunnel@\"^2.0.0\""
-  - "[ $ISTANBUL == false ]   || (npm i -g coveralls@\"^2.10.0\" && npm i istanbul@\"^0.2.0\")"
+  - "[ $SAUCE_LABS == false ] || npm i chalk@\"^0.5.0\" ecstatic@\"^0.5.0\" request@\"^2.37.0\" sauce-tunnel@\"^2.1.0\""
+  - "[ $ISTANBUL == false ]   || (npm i -g coveralls@\"^2.11.0\" && npm i istanbul@\"^0.3.0\")"
   - "[ $BIN != 'rhino' ] || (sudo mkdir /opt/rhino-1.7R5 && sudo wget -O /opt/rhino-1.7R5/js.jar http://lodash.com/_travis/rhino-1.7R5.jar)"
   - "[ $BIN != 'rhino' ] || (echo -e '#!/bin/sh\\njava -jar /opt/rhino-1.7R5/js.jar $@' | sudo tee /usr/local/bin/rhino && sudo chmod +x /usr/local/bin/rhino)"
   - "[ $BIN != 'ringo' ] || (wget http://lodash.com/_travis/ringojs-0.9.zip && sudo unzip ringojs-0.9 -d /opt && rm ringojs-0.9.zip)"
@@ -45,8 +44,8 @@ before_install:
   - "mkdir ./node_modules/lodash-cli/node_modules && cd ./node_modules/lodash-cli/node_modules/ && ln -s ../../../ ./lodash && cd ../ && npm i . && cd ../../"
   - "node ./node_modules/lodash-cli/bin/lodash $BUILD -o ./dist/lodash.$BUILD.js"
 script:
-  - "[ $ISTANBUL == false ]    || (nvm install 0.11.11 && $BIN --harmony ./node_modules/istanbul/lib/cli.js cover -x \"**/vendor/**\" --report lcovonly ./test/test.js -- ./dist/lodash.$BUILD.js)"
-  - "[ $ISTANBUL == true ] && [ $TRAVIS_PULL_REQUEST == false ] && nvm use 0.10 && cat ./coverage/lcov.info | coveralls && rm -rf ./coverage || true"
+  - "[ $ISTANBUL == false ]    || (nvm install 0.11.11 && cp ./dist/lodash.$BUILD.js ./dist/lodash.js && $BIN --harmony ./node_modules/istanbul/lib/cli.js cover -x \"**/vendor/**\" --report lcovonly ./test/test.js -- ./dist/lodash.js)"
+  - "[ $ISTANBUL == true ] && [ $TRAVIS_SECURE_ENV_VARS == true ] && nvm use 0.10 && cat ./coverage/lcov.info | coveralls || true"
   - "([ $SAUCE_LABS == true ]  || [ $ISTANBUL == true ]) || cd ./test"
   - "([ $SAUCE_LABS == true ]  || [ $ISTANBUL == true ]) || $BIN $OPTION ./test.js ../dist/lodash.$BUILD.js"
   - "([ $SAUCE_LABS == true ]  || [ $ISTANBUL == true ]) || $BIN $OPTION ./test.js ../dist/lodash.$BUILD.min.js"

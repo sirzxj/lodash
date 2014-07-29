@@ -47,21 +47,38 @@
 			}());
 
 			function addBizarroMethods() {
+				var funcProto = Function.prototype,
+				    objectProto = Object.prototype,
+				    stringProto = String.prototype;
+
+				var hasOwnProperty = objectProto.hasOwnProperty,
+				    fnToString = funcProto.toString,
+				    nativeString = fnToString.call(objectProto.toString),
+				    propertyIsEnumerable = objectProto.propertyIsEnumerable,
+				    reToString = /toString/g,
+				    whitespace = ' \t\x0B\f\xA0\ufeff\n\r\u2028\u2029\u1680\u180E\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000';
+
+				function constant(value) {
+					return function() {
+						return value;
+					};
+				}
+				function createToString(funcName) {
+					return constant(nativeString.replace(reToString, funcName));
+				}
 				// allow bypassing native checks
-				setProperty(Function.prototype, 'toString', (function() {
+				setProperty(funcProto, 'toString', (function() {
 					function wrapper() {
-						setProperty(Function.prototype, 'toString', fnToString);
-						var result = this === Set ? this.toString() : fnToString.call(this);
-						setProperty(Function.prototype, 'toString', wrapper);
+						setProperty(funcProto, 'toString', fnToString);
+						var result = hasOwnProperty.call(this, 'toString') ? this.toString() : fnToString.call(this);
+						setProperty(funcProto, 'toString', wrapper);
 						return result;
 					}
-					var fnToString = Function.prototype.toString;
-					setProperty(Function.prototype, '_toString', fnToString);
 					return wrapper;
 				}()));
 
 				// add extensions
-				Function.prototype._method = function() {};
+				funcProto._method = function() {};
 
 				// set bad shims
 				setProperty(Array, '_isArray', Array.isArray);
@@ -82,7 +99,7 @@
 				setProperty(Object, '_keys', Object.keys);
 				setProperty(Object, 'keys', function() {});
 
-				setProperty(Object.prototype, 'hasOwnProperty', (function() {
+				setProperty(objectProto, 'hasOwnProperty', (function() {
 					function wrapper(key) {
 						if (key == '1' && this && typeof this == 'object' && this.length === 2 &&
 								hasOwnProperty.call(this, 'callee') &&
@@ -92,23 +109,84 @@
 						}
 						return hasOwnProperty.call(this, key);
 					}
-					var hasOwnProperty = Object.prototype.hasOwnProperty,
-					    propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
-
-					setProperty(Object.prototype, '_hasOwnProperty', hasOwnProperty);
+					setProperty(objectProto, '_hasOwnProperty', hasOwnProperty);
 					return wrapper;
 				}()));
 
-				setProperty(String.prototype, '_contains', String.prototype.contains);
-				setProperty(String.prototype, 'contains', String.prototype._contains ? function() {} : Boolean);
+				setProperty(Number, '_isFinite', Number.isFinite);
+				setProperty(Number, 'isFinite', function() {});
 
-				setProperty(window, 'WinRTError', Error);
+				setProperty(stringProto, '_contains', stringProto.contains);
+				setProperty(stringProto, 'contains', stringProto._contains ? function() {} : Boolean);
 
 				setProperty(document, '_createDocumentFragment', document.createDocumentFragment);
 				document.createDocumentFragment = function() {};
+
+				setProperty(window, '_ArrayBuffer', window.ArrayBuffer);
+				if (window.ArrayBuffer && window.Uint8Array) {
+					ArrayBuffer = (function(_ArrayBuffer) {
+						function ArrayBuffer(byteLength) {
+							var buffer = new _ArrayBuffer(byteLength);
+							if (!byteLength) {
+								setProperty(buffer, 'slice', buffer.slice ? null : bufferSlice);
+							}
+							return buffer;
+						}
+						function bufferSlice() {
+							var newBuffer = new _ArrayBuffer(this.byteLength),
+							    view = new Uint8Array(newBuffer);
+
+							view.set(new Uint8Array(this));
+							return newBuffer;
+						}
+						setProperty(ArrayBuffer, 'toString', createToString('ArrayBuffer'));
+						setProperty(bufferSlice, 'toString', createToString('slice'));
+						return ArrayBuffer;
+					}(_ArrayBuffer));
+				}
+				if (!window.Float64Array && window.Uint8Array) {
+					Float64Array = (function() {
+						function Float64Array(buffer, byteOffset, length) {
+							return arguments.length == 1
+								? new Uint8Array(buffer)
+								: new Uint8Array(buffer, byteOffset || 0, length || buffer.byteLength);
+						}
+						setProperty(Float64Array, 'BYTES_PER_ELEMENT', 8);
+						setProperty(Float64Array, 'toString', createToString('Float64Array'));
+						return Float64Array;
+					}());
+				}
+				setProperty(window, '_parseInt', parseInt);
+				setProperty(window, 'parseInt', (function(_parseInt) {
+					var checkStr = whitespace + '08',
+					    isFaked = _parseInt(checkStr) != 8,
+					    reHexPrefix = /^0[xX]/,
+					    reTrim = RegExp('^[' + whitespace + ']+|[' + whitespace + ']+$');
+
+					return function(value, radix) {
+						if (value == checkStr && !isFaked) {
+							isFaked = true;
+							return 0;
+						}
+						value = String(value == null ? '' : value).replace(reTrim, '');
+						return _parseInt(value, +radix || (reHexPrefix.test(value) ? 16 : 10));
+					};
+				}(_parseInt)));
+
+				// fake `WinRTError`
+				setProperty(window, 'WinRTError', Error);
+
+				// fake free variable `global`
+				setProperty(window, 'exports', window);
+				setProperty(window, 'global', window);
+				setProperty(window, 'module', {});
 			}
 
 			function removeBizarroMethods() {
+				var funcProto = Function.prototype,
+				    objectProto = Object.prototype,
+				    stringProto = String.prototype;
+
 				if (Array._isArray) {
 					setProperty(Array, 'isArray', Array._isArray);
 				} else {
@@ -139,30 +217,45 @@
 				} else {
 					delete Object.keys;
 				}
-				if (String.prototype._contains) {
-					setProperty(String.prototype, 'contains', String.prototype._contains);
+				if (Number._isFinite) {
+					setProperty(Number, 'isFinite', Number._isFinite);
 				} else {
-					delete String.prototype.contains;
+					delete Number.isFinite;
 				}
-				setProperty(window, 'WinRTError', undefined);
-				setProperty(Function.prototype, 'toString', Function.prototype._toString);
-				setProperty(Object.prototype, 'hasOwnProperty', Object.prototype._hasOwnProperty);
+				if (stringProto._contains) {
+					setProperty(stringProto, 'contains', stringProto._contains);
+				} else {
+					delete stringProto.contains;
+				}
+				setProperty(objectProto, 'hasOwnProperty', objectProto._hasOwnProperty);
 
 				document.createDocumentFragment = document._createDocumentFragment;
 				setProperty(document, '_createDocumentFragment', undefined);
 
+				if (window._ArrayBuffer) {
+					ArrayBuffer = _ArrayBuffer;
+				}
+				setProperty(window, '_ArrayBuffer', undefined);
+
+				setProperty(window, 'parseInt', window._parseInt);
+				setProperty(window, '_parseInt', undefined);
+
+				setProperty(window, 'WinRTError', undefined);
+
+				setProperty(window, 'exports', undefined);
+				setProperty(window, 'global', undefined);
+				setProperty(window, 'module', undefined);
+
 				delete Array._isArray;
 				delete Date._now;
-				delete Function.prototype._method;
-				delete Function.prototype._toString;
+				delete funcProto._method;
 				delete Object._create;
 				delete Object._defineProperty;
 				delete Object._getPrototypeOf;
 				delete Object._keys;
-				delete Object.prototype._hasOwnProperty;
-				delete String.prototype._contains;
+				delete objectProto._hasOwnProperty;
+				delete stringProto._contains;
 			}
-
 			QUnit.config.hidepassed = true;
 
 			// load Lo-Dash and expose it to the bad extensions/shims
@@ -258,6 +351,15 @@
 
 				function loadModulesAndTests() {
 					require(getConfig(), ['lodash', 'shimmed', 'underscore'], function(lodash, shimmed, underscore) {
+						ui.isStrict || (ui.isStrict = 'default' in lodash);
+						lodash = lodash['default'] || lodash;
+
+						lodashModule = lodash;
+						lodashModule.moduleName = 'lodash';
+
+						shimmed = shimmed && (shimmed['default'] || shimmed);
+						underscore = underscore && (underscore['default'] || underscore);
+
 						if (shimmed && shimmed.noConflict) {
 							shimmedModule = shimmed.noConflict();
 							shimmedModule.moduleName = 'shimmed';
@@ -266,16 +368,12 @@
 							underscoreModule = underscore.noConflict();
 							underscoreModule.moduleName = 'underscore';
 						}
-						if (lodash) {
-							lodashModule = lodash;
-							lodashModule.moduleName = 'lodash';
-						}
 						if (ui.isModularize) {
 							window._ = lodash;
 						}
 						if (ui.isModularize) {
-							require(getConfig(), ['lodash/internals/baseEach'], function(baseEach) {
-								lodash._baseEach = baseEach;
+							require(getConfig(), ['lodash/internal/baseEach'], function(baseEach) {
+								lodash._baseEach = baseEach['default'] || baseEach;
 								loadTests();
 							});
 						} else {
@@ -289,7 +387,7 @@
 				if (window.requirejs) {
 					addBizarroMethods();
 					require(getConfig(), ['lodash'], function(lodash) {
-						lodashBizarro = lodash.noConflict();
+						lodashBizarro = (lodash['default'] || lodash).noConflict();
 						delete requirejs.s.contexts._;
 
 						removeBizarroMethods();
